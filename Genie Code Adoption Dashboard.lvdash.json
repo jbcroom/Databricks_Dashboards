@@ -1,0 +1,4254 @@
+{
+  "datasets": [
+    {
+      "name": "596c7066",
+      "displayName": "All system logs",
+      "queryLines": [
+        "SELECT\n",
+        "  *\n",
+        "FROM\n",
+        "  system.access.assistant_events\n",
+        "WHERE\n",
+        "  initiated_by NOT LIKE '%@databricks.com'"
+      ],
+      "columns": [
+        {
+          "displayName": "workspace_name",
+          "description": "Maps numeric workspace_id to human-readable environment name",
+          "expression": "CASE `workspace_id` WHEN '1160807094185734' THEN 'DEV' WHEN '748821712601607' THEN 'QA' WHEN '759839464639728' THEN 'PROD' ELSE `workspace_id` END"
+        },
+        {
+          "displayName": "browser",
+          "description": "Browser extracted from user_agent",
+          "expression": "CASE WHEN `user_agent` LIKE '%Edg/%' THEN 'Edge' WHEN `user_agent` LIKE '%Chrome/%' AND `user_agent` NOT LIKE '%Edg/%' THEN 'Chrome' WHEN `user_agent` LIKE '%Safari/%' AND `user_agent` NOT LIKE '%Chrome/%' THEN 'Safari' WHEN `user_agent` LIKE '%Firefox/%' THEN 'Firefox' ELSE 'Other' END"
+        },
+        {
+          "displayName": "os",
+          "description": "OS extracted from user_agent",
+          "expression": "CASE WHEN `user_agent` LIKE '%Windows%' THEN 'Windows' WHEN `user_agent` LIKE '%Macintosh%' THEN 'macOS' WHEN `user_agent` LIKE '%Linux%' THEN 'Linux' ELSE 'Other' END"
+        },
+        {
+          "displayName": "hour_of_day",
+          "description": "Hour of day (0-23) in Eastern Time from event_time",
+          "expression": "HOUR(FROM_UTC_TIMESTAMP(`event_time`, 'America/New_York'))"
+        },
+        {
+          "displayName": "day_of_week",
+          "description": "Day of week name from event_date",
+          "expression": "CASE DAYOFWEEK(`event_date`) WHEN 1 THEN 'Sun' WHEN 2 THEN 'Mon' WHEN 3 THEN 'Tue' WHEN 4 THEN 'Wed' WHEN 5 THEN 'Thu' WHEN 6 THEN 'Fri' WHEN 7 THEN 'Sat' END"
+        }
+      ]
+    },
+    {
+      "name": "ce685a08",
+      "displayName": "Top users overall",
+      "queryLines": [
+        "WITH user_counts AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    COUNT(*) as ct\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    initiated_by\n",
+        "),\n",
+        "user_names AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email,\n",
+        "    identity_metadata.run_by_display_name as display_name\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        ")\n",
+        "SELECT\n",
+        "  ROW_NUMBER() OVER (ORDER BY uc.ct DESC) as rank,\n",
+        "  un.display_name,\n",
+        "  uc.initiated_by,\n",
+        "  uc.ct\n",
+        "FROM\n",
+        "  user_counts uc\n",
+        "    INNER JOIN user_names un\n",
+        "      ON uc.initiated_by = un.email\n",
+        "ORDER BY\n",
+        "  uc.ct DESC"
+      ],
+      "columns": [
+        {
+          "displayName": "adoption_tier",
+          "description": "Groups users into adoption tiers by total submission count",
+          "expression": "CASE WHEN `ct` <= 100 THEN 'Exploring (1-100)' WHEN `ct` <= 500 THEN 'Light (101-500)' WHEN `ct` <= 2000 THEN 'Moderate (501-2K)' WHEN `ct` <= 5000 THEN 'Active (2K-5K)' ELSE 'Power (5K+)' END"
+        },
+        {
+          "displayName": "rank_display",
+          "description": "Medal emoji only for top 3 users, empty for others",
+          "expression": "CASE WHEN `rank` = 1 THEN '🥇' WHEN `rank` = 2 THEN '🥈' WHEN `rank` = 3 THEN '🥉' ELSE '' END"
+        }
+      ]
+    },
+    {
+      "name": "ad4f011f",
+      "displayName": "Top users per workspace",
+      "queryLines": [
+        "WITH RankedInitiators AS (\n",
+        "  SELECT\n",
+        "    workspace_id,\n",
+        "    initiated_by,\n",
+        "    COUNT(*) AS event_count,\n",
+        "    DENSE_RANK() OVER (PARTITION BY workspace_id ORDER BY COUNT(*) DESC) AS rank\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    workspace_id,\n",
+        "    initiated_by\n",
+        ")\n",
+        "SELECT\n",
+        "  workspace_id,\n",
+        "  initiated_by,\n",
+        "  event_count\n",
+        "FROM\n",
+        "  RankedInitiators\n",
+        "WHERE\n",
+        "  rank = 1"
+      ],
+      "columns": [
+        {
+          "displayName": "workspace_name",
+          "description": "Maps numeric workspace_id to human-readable environment name",
+          "expression": "CASE `workspace_id` WHEN '1160807094185734' THEN 'DEV' WHEN '748821712601607' THEN 'QA' WHEN '759839464639728' THEN 'PROD' ELSE `workspace_id` END"
+        }
+      ]
+    },
+    {
+      "name": "mom_growth",
+      "displayName": "Rolling 30-Day Comparison",
+      "queryLines": [
+        "WITH alive_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        ")\n",
+        "SELECT\n",
+        "  COUNT(DISTINCT\n",
+        "    CASE\n",
+        "      WHEN e.event_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN e.initiated_by\n",
+        "    END\n",
+        "  ) as current_month_users,\n",
+        "  COUNT(DISTINCT\n",
+        "    CASE\n",
+        "      WHEN\n",
+        "        e.event_date >= CURRENT_DATE - INTERVAL 60 DAYS\n",
+        "        AND e.event_date < CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "      THEN\n",
+        "        e.initiated_by\n",
+        "    END\n",
+        "  ) as previous_month_users,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN e.event_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN 1\n",
+        "    END\n",
+        "  ) as current_month_submissions,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN\n",
+        "        e.event_date >= CURRENT_DATE - INTERVAL 60 DAYS\n",
+        "        AND e.event_date < CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "      THEN\n",
+        "        1\n",
+        "    END\n",
+        "  ) as previous_month_submissions\n",
+        "FROM\n",
+        "  system.access.assistant_events e\n",
+        "    INNER JOIN alive_users au\n",
+        "      ON e.initiated_by = au.email\n",
+        "WHERE\n",
+        "  e.event_date >= CURRENT_DATE - INTERVAL 60 DAYS"
+      ]
+    },
+    {
+      "name": "monthly_engagement",
+      "displayName": "Monthly New vs Returning",
+      "queryLines": [
+        "WITH user_months AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    DATE_TRUNC('MONTH', event_date) as month,\n",
+        "    COUNT(*) as submissions\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    1,\n",
+        "    2\n",
+        "),\n",
+        "first_month AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    MIN(month) as first_month\n",
+        "  FROM\n",
+        "    user_months\n",
+        "  GROUP BY\n",
+        "    1\n",
+        ")\n",
+        "SELECT\n",
+        "  um.month,\n",
+        "  um.initiated_by,\n",
+        "  um.submissions,\n",
+        "  CASE\n",
+        "    WHEN um.month = fm.first_month THEN 'New'\n",
+        "    ELSE 'Returning'\n",
+        "  END as user_type\n",
+        "FROM\n",
+        "  user_months um\n",
+        "    JOIN first_month fm\n",
+        "      ON um.initiated_by = fm.initiated_by"
+      ]
+    },
+    {
+      "name": "daily_engagement",
+      "displayName": "Daily User Engagement",
+      "queryLines": [
+        "SELECT\n",
+        "  event_date,\n",
+        "  workspace_id,\n",
+        "  initiated_by,\n",
+        "  COUNT(*) as daily_submissions\n",
+        "FROM\n",
+        "  system.access.assistant_events\n",
+        "WHERE\n",
+        "  initiated_by NOT LIKE '%@databricks.com'\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2,\n",
+        "  3"
+      ],
+      "columns": [
+        {
+          "displayName": "workspace_name",
+          "description": "Maps numeric workspace_id to human-readable environment name",
+          "expression": "CASE `workspace_id` WHEN '1160807094185734' THEN 'DEV' WHEN '748821712601607' THEN 'QA' WHEN '759839464639728' THEN 'PROD' ELSE `workspace_id` END"
+        }
+      ]
+    },
+    {
+      "name": "cumulative_growth",
+      "displayName": "Cumulative User Growth",
+      "queryLines": [
+        "WITH first_use AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    MIN(event_date) as first_use_date\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    initiated_by\n",
+        "),\n",
+        "monthly_new AS (\n",
+        "  SELECT\n",
+        "    DATE_TRUNC('MONTH', first_use_date) as month,\n",
+        "    COUNT(*) as new_users\n",
+        "  FROM\n",
+        "    first_use\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "-- Ensure current month always has a row (0 if no new users yet)\n",
+        "with_current AS (\n",
+        "  SELECT\n",
+        "    month,\n",
+        "    new_users\n",
+        "  FROM\n",
+        "    monthly_new\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    DATE_TRUNC('MONTH', CURRENT_DATE) as month,\n",
+        "    0 as new_users\n",
+        "  WHERE\n",
+        "    NOT EXISTS (\n",
+        "      SELECT\n",
+        "        1\n",
+        "      FROM\n",
+        "        monthly_new\n",
+        "      WHERE\n",
+        "        month = DATE_TRUNC('MONTH', CURRENT_DATE)\n",
+        "    )\n",
+        "),\n",
+        "aggregated AS (\n",
+        "  SELECT\n",
+        "    month,\n",
+        "    SUM(new_users) as new_users\n",
+        "  FROM\n",
+        "    with_current\n",
+        "  GROUP BY\n",
+        "    month\n",
+        ")\n",
+        "SELECT\n",
+        "  month,\n",
+        "  new_users,\n",
+        "  SUM(new_users) OVER (ORDER BY month) as cumulative_users\n",
+        "FROM\n",
+        "  aggregated\n",
+        "ORDER BY\n",
+        "  month"
+      ]
+    },
+    {
+      "name": "retention_rate",
+      "displayName": "Retention Rate",
+      "queryLines": [
+        "WITH alive_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "),\n",
+        "current_period AS (\n",
+        "  SELECT DISTINCT\n",
+        "    e.initiated_by\n",
+        "  FROM\n",
+        "    system.access.assistant_events e\n",
+        "      INNER JOIN alive_users au\n",
+        "        ON e.initiated_by = au.email\n",
+        "  WHERE\n",
+        "    e.event_date >= CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "),\n",
+        "prior_period AS (\n",
+        "  SELECT DISTINCT\n",
+        "    e.initiated_by\n",
+        "  FROM\n",
+        "    system.access.assistant_events e\n",
+        "      INNER JOIN alive_users au\n",
+        "        ON e.initiated_by = au.email\n",
+        "  WHERE\n",
+        "    e.event_date >= CURRENT_DATE - INTERVAL 60 DAYS\n",
+        "    AND e.event_date < CURRENT_DATE - INTERVAL 30 DAYS\n",
+        ")\n",
+        "SELECT\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(*)\n",
+        "    FROM\n",
+        "      prior_period\n",
+        "  ) as last_month_users,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(*)\n",
+        "    FROM\n",
+        "      current_period c\n",
+        "    WHERE\n",
+        "      c.initiated_by IN (\n",
+        "        SELECT\n",
+        "          initiated_by\n",
+        "        FROM\n",
+        "          prior_period\n",
+        "      )\n",
+        "  ) as retained_users,\n",
+        "  ROUND(\n",
+        "    (\n",
+        "      SELECT\n",
+        "        COUNT(*)\n",
+        "      FROM\n",
+        "        current_period c\n",
+        "      WHERE\n",
+        "        c.initiated_by IN (\n",
+        "          SELECT\n",
+        "            initiated_by\n",
+        "          FROM\n",
+        "            prior_period\n",
+        "        )\n",
+        "    )\n",
+        "      * 1.0\n",
+        "      / NULLIF(\n",
+        "        (\n",
+        "          SELECT\n",
+        "            COUNT(*)\n",
+        "          FROM\n",
+        "            prior_period\n",
+        "        ),\n",
+        "        0\n",
+        "      ),\n",
+        "    3\n",
+        "  ) as retention_pct"
+      ]
+    },
+    {
+      "name": "cross_env",
+      "displayName": "Cross-Environment Usage",
+      "queryLines": [
+        "WITH alive_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "),\n",
+        "user_workspaces AS (\n",
+        "  SELECT\n",
+        "    e.initiated_by,\n",
+        "    COLLECT_SET(\n",
+        "      CASE e.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "      END\n",
+        "    ) as environments,\n",
+        "    SIZE(COLLECT_SET(e.workspace_id)) as env_count\n",
+        "  FROM\n",
+        "    system.access.assistant_events e\n",
+        "      INNER JOIN alive_users au\n",
+        "        ON e.initiated_by = au.email\n",
+        "  GROUP BY\n",
+        "    e.initiated_by\n",
+        ")\n",
+        "SELECT\n",
+        "  initiated_by,\n",
+        "  env_count,\n",
+        "  CASE env_count\n",
+        "    WHEN 3 THEN 'All 3 (DEV + QA + PROD)'\n",
+        "    WHEN 1 THEN CONCAT(environments[0], ' only')\n",
+        "    ELSE CONCAT_WS(' + ', SORT_ARRAY(environments))\n",
+        "  END as usage_pattern\n",
+        "FROM\n",
+        "  user_workspaces"
+      ]
+    },
+    {
+      "name": "inactive_users",
+      "displayName": "Inactive Users",
+      "queryLines": [
+        "WITH user_summary AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    MAX(event_date) as last_active_date,\n",
+        "    COUNT(*) as total_submissions,\n",
+        "    MIN(event_date) as first_active_date\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    initiated_by\n",
+        "),\n",
+        "user_names AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email,\n",
+        "    identity_metadata.run_by_display_name as display_name\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        "),\n",
+        "scored AS (\n",
+        "  SELECT\n",
+        "    un.display_name,\n",
+        "    us.initiated_by,\n",
+        "    us.last_active_date,\n",
+        "    us.first_active_date,\n",
+        "    us.total_submissions,\n",
+        "    DATEDIFF(CURRENT_DATE, us.last_active_date) as days_inactive,\n",
+        "    CASE\n",
+        "      WHEN\n",
+        "        LN(us.total_submissions + 1) * 40.0 / LN(DATEDIFF(CURRENT_DATE, us.last_active_date) + 1)\n",
+        "          > 100\n",
+        "      THEN\n",
+        "        100\n",
+        "      ELSE\n",
+        "        ROUND(\n",
+        "          LN(us.total_submissions + 1) * 40.0 / LN(DATEDIFF(CURRENT_DATE, us.last_active_date) + 1),\n",
+        "          0\n",
+        "        )\n",
+        "    END as priority_score\n",
+        "  FROM\n",
+        "    user_summary us\n",
+        "      INNER JOIN user_names un\n",
+        "        ON us.initiated_by = un.email\n",
+        "  WHERE\n",
+        "    us.last_active_date < CURRENT_DATE - INTERVAL 30 DAYS\n",
+        ")\n",
+        "SELECT\n",
+        "  *\n",
+        "FROM\n",
+        "  scored\n",
+        "ORDER BY\n",
+        "  priority_score DESC"
+      ],
+      "columns": [
+        {
+          "displayName": "inactivity_tier",
+          "description": "Categorizes inactive users into three tiers matching conditional formatting colors",
+          "expression": "CASE WHEN `days_inactive` <= 60 THEN 'Recent (0-60 days)' WHEN `days_inactive` <= 120 THEN 'Moderate (61-120 days)' ELSE 'Long-term (120+ days)' END"
+        },
+        {
+          "displayName": "priority_band",
+          "description": "Categorizes re-engagement urgency: High (>=60), Medium (30-59), Low (<30)",
+          "expression": "CASE WHEN `priority_score` >= 60 THEN 'High Priority' WHEN `priority_score` >= 30 THEN 'Medium Priority' ELSE 'Low Priority' END"
+        }
+      ]
+    },
+    {
+      "name": "growth_decomp",
+      "displayName": "Growth Decomposition",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', event_date) as month,\n",
+        "  COUNT(DISTINCT initiated_by) as active_users,\n",
+        "  COUNT(*) as total_submissions,\n",
+        "  ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT initiated_by), 1) as avg_submissions_per_user\n",
+        "FROM\n",
+        "  system.access.assistant_events\n",
+        "WHERE\n",
+        "  initiated_by NOT LIKE '%@databricks.com'\n",
+        "GROUP BY\n",
+        "  1\n",
+        "ORDER BY\n",
+        "  1"
+      ]
+    },
+    {
+      "name": "tier_migration",
+      "displayName": "Monthly Tier Distribution",
+      "queryLines": [
+        "WITH monthly_cumulative AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    DATE_TRUNC('MONTH', event_date) as month,\n",
+        "    SUM(COUNT(*)) OVER (\n",
+        "        PARTITION BY initiated_by\n",
+        "        ORDER BY DATE_TRUNC('MONTH', event_date)\n",
+        "      ) as cumulative_submissions\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    initiated_by,\n",
+        "    DATE_TRUNC('MONTH', event_date)\n",
+        ")\n",
+        "SELECT\n",
+        "  month,\n",
+        "  initiated_by,\n",
+        "  cumulative_submissions,\n",
+        "  CASE\n",
+        "    WHEN cumulative_submissions <= 100 THEN 'Exploring (1-100)'\n",
+        "    WHEN cumulative_submissions <= 500 THEN 'Light (101-500)'\n",
+        "    WHEN cumulative_submissions <= 2000 THEN 'Moderate (501-2K)'\n",
+        "    WHEN cumulative_submissions <= 5000 THEN 'Active (2K-5K)'\n",
+        "    ELSE 'Power (5K+)'\n",
+        "  END as tier\n",
+        "FROM\n",
+        "  monthly_cumulative"
+      ]
+    },
+    {
+      "name": "adoption_rate",
+      "displayName": "Adoption Rate",
+      "queryLines": [
+        "WITH alive_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "),\n",
+        "workspace_users AS (\n",
+        "  SELECT\n",
+        "    workspace_id,\n",
+        "    COUNT(DISTINCT identity_metadata.run_by) as ws_users\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    event_date >= '2025-04-01'\n",
+        "    AND identity_metadata.run_by IS NOT NULL\n",
+        "    AND identity_metadata.run_by != ''\n",
+        "    AND workspace_id IN (1160807094185734, 748821712601607, 759839464639728)\n",
+        "  GROUP BY\n",
+        "    workspace_id\n",
+        "),\n",
+        "workspace_users_total AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT identity_metadata.run_by) as total_workspace_users\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    event_date >= '2025-04-01'\n",
+        "    AND identity_metadata.run_by IS NOT NULL\n",
+        "    AND identity_metadata.run_by != ''\n",
+        "    AND workspace_id IN (1160807094185734, 748821712601607, 759839464639728)\n",
+        "),\n",
+        "genie_per_ws AS (\n",
+        "  SELECT\n",
+        "    e.workspace_id,\n",
+        "    COUNT(DISTINCT e.initiated_by) as genie_users,\n",
+        "    COUNT(DISTINCT\n",
+        "      CASE\n",
+        "        WHEN e.event_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN e.initiated_by\n",
+        "      END\n",
+        "    ) as active_this_month\n",
+        "  FROM\n",
+        "    system.access.assistant_events e\n",
+        "      INNER JOIN alive_users au\n",
+        "        ON e.initiated_by = au.email\n",
+        "  GROUP BY\n",
+        "    e.workspace_id\n",
+        "),\n",
+        "genie_total AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT e.initiated_by) as total_genie_users,\n",
+        "    COUNT(DISTINCT\n",
+        "      CASE\n",
+        "        WHEN e.event_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN e.initiated_by\n",
+        "      END\n",
+        "    ) as total_active_this_month\n",
+        "  FROM\n",
+        "    system.access.assistant_events e\n",
+        "      INNER JOIN alive_users au\n",
+        "        ON e.initiated_by = au.email\n",
+        ")\n",
+        "SELECT\n",
+        "  CASE wu.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "  END as environment,\n",
+        "  wu.ws_users as workspace_users,\n",
+        "  COALESCE(gw.genie_users, 0) as genie_users,\n",
+        "  COALESCE(gw.active_this_month, 0) as active_this_month,\n",
+        "  ROUND(COALESCE(gw.genie_users, 0) * 100.0 / wu.ws_users, 1) as alltime_pct,\n",
+        "  ROUND(COALESCE(gw.active_this_month, 0) * 100.0 / wu.ws_users, 1) as active_pct,\n",
+        "  ROUND(COALESCE(gw.genie_users, 0) * 1.0 / wu.ws_users, 3) as alltime_adoption_rate,\n",
+        "  ROUND(COALESCE(gw.active_this_month, 0) * 1.0 / wu.ws_users, 3) as current_adoption_rate,\n",
+        "  wt.total_workspace_users,\n",
+        "  gt.total_genie_users,\n",
+        "  gt.total_active_this_month,\n",
+        "  ROUND(gt.total_genie_users * 1.0 / wt.total_workspace_users, 3) as overall_alltime_rate,\n",
+        "  ROUND(gt.total_active_this_month * 1.0 / wt.total_workspace_users, 3) as overall_current_rate\n",
+        "FROM\n",
+        "  workspace_users wu\n",
+        "    LEFT JOIN genie_per_ws gw\n",
+        "      ON wu.workspace_id = gw.workspace_id\n",
+        "    CROSS JOIN workspace_users_total wt\n",
+        "    CROSS JOIN genie_total gt"
+      ]
+    },
+    {
+      "name": "user_platform",
+      "displayName": "User Platform Details",
+      "queryLines": [
+        "WITH user_platform AS (\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    workspace_id,\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "      ELSE workspace_id\n",
+        "    END as environment,\n",
+        "    CASE\n",
+        "      WHEN user_agent LIKE '%Edg/%' THEN 'Edge'\n",
+        "      WHEN\n",
+        "        user_agent LIKE '%Chrome/%'\n",
+        "        AND user_agent NOT LIKE '%Edg/%'\n",
+        "      THEN\n",
+        "        'Chrome'\n",
+        "      WHEN\n",
+        "        user_agent LIKE '%Safari/%'\n",
+        "        AND user_agent NOT LIKE '%Chrome/%'\n",
+        "      THEN\n",
+        "        'Safari'\n",
+        "      WHEN user_agent LIKE '%Firefox/%' THEN 'Firefox'\n",
+        "      ELSE 'Other'\n",
+        "    END as browser,\n",
+        "    CASE\n",
+        "      WHEN user_agent LIKE '%Windows%' THEN 'Windows'\n",
+        "      WHEN user_agent LIKE '%Macintosh%' THEN 'macOS'\n",
+        "      WHEN user_agent LIKE '%Linux%' THEN 'Linux'\n",
+        "      ELSE 'Other'\n",
+        "    END as os,\n",
+        "    COUNT(*) as submissions\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    initiated_by NOT LIKE '%@databricks.com'\n",
+        "  GROUP BY\n",
+        "    initiated_by,\n",
+        "    workspace_id,\n",
+        "    user_agent\n",
+        "),\n",
+        "user_names AS (\n",
+        "  SELECT DISTINCT\n",
+        "    identity_metadata.run_by as email,\n",
+        "    identity_metadata.run_by_display_name as display_name\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    identity_metadata.run_by_display_name IS NOT NULL\n",
+        ")\n",
+        "SELECT\n",
+        "  un.display_name,\n",
+        "  up.initiated_by,\n",
+        "  up.environment,\n",
+        "  up.browser,\n",
+        "  up.os,\n",
+        "  SUM(up.submissions) as submissions\n",
+        "FROM\n",
+        "  user_platform up\n",
+        "    INNER JOIN user_names un\n",
+        "      ON up.initiated_by = un.email\n",
+        "GROUP BY\n",
+        "  un.display_name,\n",
+        "  up.initiated_by,\n",
+        "  up.environment,\n",
+        "  up.browser,\n",
+        "  up.os\n",
+        "ORDER BY\n",
+        "  submissions DESC"
+      ],
+      "columns": [
+        {
+          "displayName": "browser_os_combo",
+          "description": "Browser and OS combined label for counting unique platform combinations",
+          "expression": "CONCAT(`browser`, ' / ', `os`)"
+        },
+        {
+          "displayName": "edge_share",
+          "description": "Percentage of total submissions from Edge browser",
+          "expression": "SUM(CASE WHEN `browser` = 'Edge' THEN `submissions` ELSE 0 END) * 1.0 / SUM(`submissions`)"
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "a101a1b5",
+      "displayName": "Executive Summary",
+      "layout": [
+        {
+          "widget": {
+            "name": "71d00716",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "monthly(event_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_date`)"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Monthly Active Users",
+                "showTitle": true,
+                "description": "Unique users per month across DEV, QA, and PROD",
+                "showDescription": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(event_date)",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Active Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "workspace_name",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 10,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "7df43ef8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "weekly(event_date)",
+                      "expression": "DATE_TRUNC(\"WEEK\", `event_date`)"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Weekly Active Users",
+                "showTitle": true,
+                "description": "Unique users per week across DEV, QA, and PROD",
+                "showDescription": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "weekly(event_date)",
+                  "displayName": "Week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Active Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "workspace_name",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_active_month",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "mom_growth",
+                  "fields": [
+                    {
+                      "name": "sum(previous_month_users)",
+                      "expression": "SUM(`previous_month_users`)"
+                    },
+                    {
+                      "name": "sum(current_month_users)",
+                      "expression": "SUM(`current_month_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Active Users (30d)",
+                "showTitle": true,
+                "description": "Unique users in the last 30 days vs. prior 30 days",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(current_month_users)",
+                  "displayName": "Last 30 Days"
+                },
+                "target": {
+                  "fieldName": "sum(previous_month_users)",
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">="
+                        },
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": "<"
+                        },
+                        "color": "#F44336"
+                      }
+                    ]
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "Prior 30 Days"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_submissions_month",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "mom_growth",
+                  "fields": [
+                    {
+                      "name": "sum(previous_month_submissions)",
+                      "expression": "SUM(`previous_month_submissions`)"
+                    },
+                    {
+                      "name": "sum(current_month_submissions)",
+                      "expression": "SUM(`current_month_submissions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Submissions (30d)",
+                "showTitle": true,
+                "description": "Total interactions in the last 30 days vs. prior 30 days",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(current_month_submissions)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "compact"
+                  },
+                  "displayName": "Last 30 Days"
+                },
+                "target": {
+                  "fieldName": "sum(previous_month_submissions)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "compact"
+                  },
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">="
+                        },
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": "<"
+                        },
+                        "color": "#F44336"
+                      }
+                    ]
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "Prior 30 Days"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "total_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Total Genie Users",
+                "showTitle": true,
+                "description": "All-time count, includes departed users (historical)",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Total Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "main_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Genie Code Adoption Dashboard\n",
+                "Understanding how users leverage Genie Code across DEV, QA, and PROD environments. All metrics exclude inactive users. Use the **Date Range** and **Environment** global filters to narrow any view."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "data_freshness",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "max(event_date)",
+                      "expression": "MAX(`event_date`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Data Through",
+                "showTitle": true,
+                "description": "Most recent event in dataset",
+                "showDescription": true
+              },
+              "format": {
+                "timeFormat": {
+                  "formatType": "moment",
+                  "format": "MM-DD-YYYY"
+                }
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(event_date)",
+                  "displayName": "Last Event"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "adoption_rate",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "sum(alltime_pct)",
+                      "expression": "SUM(`alltime_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "All-time Adoption %",
+                "showTitle": true,
+                "description": "Genie users ÷ workspace users by environment (since Apr 2025)",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(alltime_pct)",
+                  "displayName": "Adoption %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "legend": {
+                    "hide": true
+                  },
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_bar_active",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "adoption_rate",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "sum(active_pct)",
+                      "expression": "SUM(`active_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Active Adoption % (30d)",
+                "showTitle": true,
+                "description": "Users active in the last 30 days ÷ workspace users by environment",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(active_pct)",
+                  "displayName": "Active %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "legend": {
+                    "hide": true
+                  },
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 4,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_combined",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "adoption_rate",
+                  "fields": [
+                    {
+                      "name": "max(overall_alltime_rate)",
+                      "expression": "MAX(`overall_alltime_rate`)"
+                    },
+                    {
+                      "name": "max(overall_current_rate)",
+                      "expression": "MAX(`overall_current_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Adoption Rate (30d)",
+                "showTitle": true,
+                "description": "Active users (last 30d) ÷ workspace users (vs. all-time)",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(overall_current_rate)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "Last 30 Days"
+                },
+                "target": {
+                  "fieldName": "max(overall_alltime_rate)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": ">="
+                        },
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0"
+                          },
+                          "operator": "<"
+                        },
+                        "color": "#F44336"
+                      }
+                    ]
+                  },
+                  "change": {
+                    "type": "numeric"
+                  },
+                  "displayName": "vs. All-time"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "leaderboard",
+      "displayName": "Leaderboard",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 🏆 Leaderboard\n",
+                "All-time Genie Code submission rankings by user."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "top_contributor",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ce685a08",
+                  "fields": [
+                    {
+                      "name": "max(ct)",
+                      "expression": "MAX(`ct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "#1 Contributor",
+                "showTitle": true,
+                "description": "Highest all-time submission count",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(ct)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "compact"
+                  },
+                  "displayName": "Submissions"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "power_count",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ce685a08",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`ct` > 5000"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Power Users (5K+)",
+                "showTitle": true,
+                "description": "Users exceeding 5,000 total submissions",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Count"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "total_ranked",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ce685a08",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Total Ranked Users",
+                "showTitle": true,
+                "description": "Active users with at least one submission",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_tiers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ce685a08",
+                  "fields": [
+                    {
+                      "name": "adoption_tier",
+                      "expression": "`adoption_tier`"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "User Adoption Tiers",
+                "showTitle": true,
+                "description": "User distribution by cumulative submission tier",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "adoption_tier",
+                  "displayName": "Tier",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Exploring (1-100)",
+                        "Light (101-500)",
+                        "Moderate (501-2K)",
+                        "Active (2K-5K)",
+                        "Power (5K+)"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "adoption_tier",
+                  "legend": {
+                    "hide": true
+                  },
+                  "displayName": "Tier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Exploring (1-100)",
+                        "color": "#90CAF9"
+                      },
+                      {
+                        "value": "Light (101-500)",
+                        "color": "#42A5F5"
+                      },
+                      {
+                        "value": "Moderate (501-2K)",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "Active (2K-5K)",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Power (5K+)",
+                        "color": "#F44336"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "top_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ce685a08",
+                  "fields": [
+                    {
+                      "name": "rank_display",
+                      "expression": "`rank_display`"
+                    },
+                    {
+                      "name": "rank",
+                      "expression": "`rank`"
+                    },
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "adoption_tier",
+                      "expression": "`adoption_tier`"
+                    },
+                    {
+                      "name": "ct",
+                      "expression": "`ct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "User Rankings",
+                "showTitle": true,
+                "description": "All users ranked by total submissions with tier badges",
+                "showDescription": true
+              },
+              "version": 2,
+              "rowsPerPage": 25,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "rank_display",
+                    "columnWidth": 50,
+                    "contentAlignment": "center",
+                    "displayName": " "
+                  },
+                  {
+                    "fieldName": "rank",
+                    "columnWidth": 70,
+                    "contentAlignment": "right",
+                    "displayName": "Rank"
+                  },
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "adoption_tier",
+                    "displayName": "Tier",
+                    "style": {
+                      "type": "basic",
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Power (5K+)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#F44336",
+                          "foregroundColor": "#FFFFFF"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Active (2K-5K)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#4CAF50",
+                          "foregroundColor": "#FFFFFF"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Moderate (501-2K)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#FF9800",
+                          "foregroundColor": "#FFFFFF"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Light (101-500)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#42A5F5",
+                          "foregroundColor": "#FFFFFF"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Exploring (1-100)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#90CAF9",
+                          "foregroundColor": "#FFFFFF"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "fieldName": "ct",
+                    "displayName": "Submissions"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "tier_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Tier Migration Over Time\n",
+                "How users progress through adoption tiers each month."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "tier_migration",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "tier_migration",
+                  "fields": [
+                    {
+                      "name": "tier",
+                      "expression": "`tier`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Monthly Tier Distribution",
+                "showTitle": true,
+                "description": "How users progress through tiers month over month",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "tier",
+                  "legend": {
+                    "position": "bottom"
+                  },
+                  "displayName": "Tier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Exploring (1-100)",
+                        "color": "#90CAF9"
+                      },
+                      {
+                        "value": "Light (101-500)",
+                        "color": "#42A5F5"
+                      },
+                      {
+                        "value": "Moderate (501-2K)",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "Active (2K-5K)",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Power (5K+)",
+                        "color": "#F44336"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "adoption",
+      "displayName": "Adoption & Growth",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Adoption & Growth\n",
+                "Tracking new user onboarding, cumulative growth, and retention patterns."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "new_users_month",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cumulative_growth",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "New Users Per Month",
+                "showTitle": true,
+                "description": "First-time Genie Code users each month",
+                "showDescription": true
+              },
+              "mark": {
+                "colors": [
+                  "#42A5F5"
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(new_users)",
+                  "displayName": "New Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cumulative_growth",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cumulative_growth",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(cumulative_users)",
+                      "expression": "SUM(`cumulative_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Cumulative User Growth",
+                "showTitle": true,
+                "description": "Running total of all Genie Code users over time",
+                "showDescription": true
+              },
+              "mark": {
+                "colors": [
+                  "#42A5F5"
+                ],
+                "marker": {
+                  "shape": "circle"
+                }
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(cumulative_users)",
+                  "displayName": "Total Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "new_vs_returning",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "monthly_engagement",
+                  "fields": [
+                    {
+                      "name": "user_type",
+                      "expression": "`user_type`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "New vs Returning Users (%)",
+                "showTitle": true,
+                "description": "Monthly share of first-time vs returning users",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "percent-stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "user_type",
+                  "displayName": "User Type",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "New",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "Returning",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "retention_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "retention_rate",
+                  "fields": [
+                    {
+                      "name": "sum(retention_pct)",
+                      "expression": "SUM(`retention_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Retention Rate (30d)",
+                "showTitle": true,
+                "description": "% of prior 30-day users still active in last 30 days",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(retention_pct)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "style": {
+                    "rules": [
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0.8"
+                          },
+                          "operator": ">="
+                        },
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0.8"
+                          },
+                          "operator": "<"
+                        },
+                        "color": "#FF9800"
+                      },
+                      {
+                        "condition": {
+                          "operand": {
+                            "type": "data-value",
+                            "value": "0.5"
+                          },
+                          "operator": "<"
+                        },
+                        "color": "#F44336"
+                      }
+                    ]
+                  },
+                  "displayName": "Retention %"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "retained_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "retention_rate",
+                  "fields": [
+                    {
+                      "name": "sum(retained_users)",
+                      "expression": "SUM(`retained_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Retained Users (30d)",
+                "showTitle": true,
+                "description": "Users from prior 30 days who returned in last 30 days",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(retained_users)",
+                  "displayName": "Retained"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "new_this_month_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cumulative_growth",
+                  "fields": [
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`month` <=> PARSE_RELATIVE_DATE('now/M', 'FLOOR')"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "New Users This Month",
+                "showTitle": true,
+                "description": "First-time Genie Code users this month (0 = none yet)",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(new_users)",
+                  "displayName": "New Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "growth_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## What's Driving Growth?\n",
+                "Submission growth is driven more by **usage intensity** (avg submissions per user) than headcount alone."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "growth_combo",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_decomp",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(active_users)",
+                      "expression": "SUM(`active_users`)"
+                    },
+                    {
+                      "name": "sum(avg_submissions_per_user)",
+                      "expression": "SUM(`avg_submissions_per_user`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "frame": {
+                "title": "Active Users vs Avg Submissions Per User",
+                "showTitle": true,
+                "description": "Monthly headcount (bars) vs usage intensity (line)",
+                "showDescription": true
+              },
+              "widgetType": "combo",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "primary": {
+                    "fields": [
+                      {
+                        "fieldName": "sum(active_users)",
+                        "displayName": "Active Users"
+                      }
+                    ],
+                    "scale": {
+                      "type": "quantitative"
+                    }
+                  },
+                  "secondary": {
+                    "fields": [
+                      {
+                        "fieldName": "sum(avg_submissions_per_user)",
+                        "displayName": "Avg Submissions / User"
+                      }
+                    ],
+                    "scale": {
+                      "type": "quantitative"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "engagement",
+      "displayName": "Engagement Analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Engagement Analysis\n",
+                "Deep-dive into usage patterns, submission intensity, and peak activity times."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "daily_submissions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "weekly(event_date)",
+                      "expression": "DATE_TRUNC(\"WEEK\", `event_date`)"
+                    },
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Weekly Submissions by Environment",
+                "showTitle": true,
+                "description": "Total weekly volume across DEV, QA, and PROD",
+                "showDescription": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "weekly(event_date)",
+                  "displayName": "Week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(event_id)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact"
+                  },
+                  "displayName": "Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "workspace_name",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "avg_submissions_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "daily_engagement",
+                  "fields": [
+                    {
+                      "name": "weekly(event_date)",
+                      "expression": "DATE_TRUNC(\"WEEK\", `event_date`)"
+                    },
+                    {
+                      "name": "avg(daily_submissions)",
+                      "expression": "AVG(`daily_submissions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "Avg Submissions Per Active User (Weekly)",
+                "showTitle": true,
+                "description": "Mean submissions per user each week, all environments",
+                "showDescription": true
+              },
+              "version": 3,
+              "mark": {
+                "colors": [
+                  "#26C6DA"
+                ]
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "weekly(event_date)",
+                  "displayName": "Week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(daily_submissions)",
+                  "displayName": "Avg Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "dow_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "day_of_week",
+                      "expression": "`day_of_week`"
+                    },
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Activity by Day of Week",
+                "showTitle": true,
+                "description": "Total submissions aggregated by weekday",
+                "showDescription": true
+              },
+              "mark": {
+                "colors": [
+                  "#FF9800"
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day_of_week",
+                  "displayName": "Day of Week",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Mon",
+                        "Tue",
+                        "Wed",
+                        "Thu",
+                        "Fri",
+                        "Sat",
+                        "Sun"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "count(event_id)",
+                  "displayName": "Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "hour_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "hour_of_day",
+                      "expression": "`hour_of_day`"
+                    },
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Activity by Hour of Day (ET)",
+                "showTitle": true,
+                "description": "Submission distribution by hour in Eastern Time",
+                "showDescription": true
+              },
+              "mark": {
+                "colors": [
+                  "#26C6DA"
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "Hour",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(event_id)",
+                  "displayName": "Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "avg_per_user_day",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "daily_engagement",
+                  "fields": [
+                    {
+                      "name": "avg(daily_submissions)",
+                      "expression": "AVG(`daily_submissions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Avg Submissions/User/Day",
+                "showTitle": true,
+                "description": "Mean daily submissions per active user",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(daily_submissions)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    },
+                    "abbreviation": "none"
+                  },
+                  "displayName": "Avg"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "total_submissions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Total Submissions",
+                "showTitle": true,
+                "description": "All-time submission count across all environments",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(event_id)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "compact"
+                  },
+                  "displayName": "Submissions"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "active_days",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "countdistinct(event_date)",
+                      "expression": "COUNT(DISTINCT `event_date`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Active Days Tracked",
+                "showTitle": true,
+                "description": "Days with at least one submission recorded",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(event_date)",
+                  "displayName": "Days"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "date_range",
+            "queries": [
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf1588a58e634afa2020a9_event_date",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "event_date_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d286f1891b4e046be1c934ca4_event_date",
+                "query": {
+                  "datasetName": "daily_engagement",
+                  "fields": [
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "event_date_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d24f21d449cbf0971883f4b1f_month",
+                "query": {
+                  "datasetName": "monthly_engagement",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d2bf31d0bad81786d5450ecb3_month",
+                "query": {
+                  "datasetName": "cumulative_growth",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f143d6d5441d4b996c9cd4068c6d7c_month",
+                "query": {
+                  "datasetName": "growth_decomp",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f143d6d8da1e47b97403b22c9b1eab_month",
+                "query": {
+                  "datasetName": "tier_migration",
+                  "fields": [
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Date Range",
+                "showTitle": true
+              },
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "event_date",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf1588a58e634afa2020a9_event_date"
+                  },
+                  {
+                    "fieldName": "event_date",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d286f1891b4e046be1c934ca4_event_date"
+                  },
+                  {
+                    "fieldName": "month",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d24f21d449cbf0971883f4b1f_month"
+                  },
+                  {
+                    "fieldName": "month",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d2bf31d0bad81786d5450ecb3_month"
+                  },
+                  {
+                    "fieldName": "month",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f143d6d5441d4b996c9cd4068c6d7c_month"
+                  },
+                  {
+                    "fieldName": "month",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f143d6d8da1e47b97403b22c9b1eab_month"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "env_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf1588a58e634afa2020a9_workspace_name",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "workspace_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf159d8501b9ee726d9a34_workspace_name",
+                "query": {
+                  "datasetName": "ad4f011f",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "workspace_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d286f1891b4e046be1c934ca4_workspace_name",
+                "query": {
+                  "datasetName": "daily_engagement",
+                  "fields": [
+                    {
+                      "name": "workspace_name",
+                      "expression": "`workspace_name`"
+                    },
+                    {
+                      "name": "workspace_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Environment",
+                "showTitle": true
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "workspace_name",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf1588a58e634afa2020a9_workspace_name"
+                  },
+                  {
+                    "fieldName": "workspace_name",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f122115cbf159d8501b9ee726d9a34_workspace_name"
+                  },
+                  {
+                    "fieldName": "workspace_name",
+                    "queryName": "dashboards/01f122115cbf14d681fd97a1fe39bc2c/datasets/01f1433d286f1891b4e046be1c934ca4_workspace_name"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "reengagement",
+      "displayName": "Re-engagement",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Re-engagement\n",
+                "Identify and prioritize users who have gone inactive. Higher priority scores indicate high-value users who recently dropped off."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "inactive_count",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Inactive (30d+)",
+                "showTitle": true,
+                "description": "Users with no submissions in the last 30 days",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Inactive Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "avg_days_inactive",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "avg(days_inactive)",
+                      "expression": "AVG(`days_inactive`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Avg Days Inactive",
+                "showTitle": true,
+                "description": "Average days since last submission",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(days_inactive)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "none"
+                  },
+                  "displayName": "Avg Days"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "longest_inactive",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "max(days_inactive)",
+                      "expression": "MAX(`days_inactive`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Longest Inactive (Days)",
+                "showTitle": true,
+                "description": "Most days since any user's last submission",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(days_inactive)",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    },
+                    "abbreviation": "none"
+                  },
+                  "displayName": "Max Days"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "tier_pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    },
+                    {
+                      "name": "inactivity_tier",
+                      "expression": "`inactivity_tier`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Inactivity Tier Breakdown",
+                "showTitle": true,
+                "description": "Inactive users grouped by days since last activity",
+                "showDescription": true
+              },
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Users"
+                },
+                "color": {
+                  "fieldName": "inactivity_tier",
+                  "legend": {
+                    "position": "right"
+                  },
+                  "displayName": "Tier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Recent (0-60 days)",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Moderate (61-120 days)",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "Long-term (120+ days)",
+                        "color": "#F44336"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "priority_scatter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "inactivity_tier",
+                      "expression": "`inactivity_tier`"
+                    },
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "priority_band",
+                      "expression": "`priority_band`"
+                    },
+                    {
+                      "name": "priority_score",
+                      "expression": "`priority_score`"
+                    },
+                    {
+                      "name": "days_inactive",
+                      "expression": "`days_inactive`"
+                    },
+                    {
+                      "name": "total_submissions",
+                      "expression": "`total_submissions`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Re-engagement Priority Map",
+                "showTitle": true,
+                "description": "Bubble size = priority; further right = longer inactive",
+                "showDescription": true
+              },
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "days_inactive",
+                  "displayName": "Days Inactive",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "total_submissions",
+                  "displayName": "Total Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "inactivity_tier",
+                  "displayName": "Tier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Recent (0-60 days)",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Moderate (61-120 days)",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "Long-term (120+ days)",
+                        "color": "#F44336"
+                      }
+                    ]
+                  }
+                },
+                "size": {
+                  "fieldName": "priority_score",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Priority Score"
+                },
+                "extra": [
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "priority_band",
+                    "displayName": "Priority"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "detail_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inactive_users",
+                  "fields": [
+                    {
+                      "name": "priority_band",
+                      "expression": "`priority_band`"
+                    },
+                    {
+                      "name": "max(priority_score)",
+                      "expression": "MAX(`priority_score`)"
+                    },
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "inactivity_tier",
+                      "expression": "`inactivity_tier`"
+                    },
+                    {
+                      "name": "last_active_date",
+                      "expression": "`last_active_date`"
+                    },
+                    {
+                      "name": "sum(total_submissions)",
+                      "expression": "SUM(`total_submissions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "Inactive User Details",
+                "showTitle": true,
+                "description": "Prioritized list with scores, tiers, and last active dates",
+                "showDescription": true
+              },
+              "version": 2,
+              "rowsPerPage": 25,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "priority_band",
+                    "displayName": "Priority",
+                    "style": {
+                      "type": "basic",
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "High Priority"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": {
+                            "themeColorType": "visualizationColors",
+                            "position": 4
+                          }
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Medium Priority"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": {
+                            "themeColorType": "visualizationColors",
+                            "position": 2
+                          }
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Low Priority"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#00A972"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "fieldName": "max(priority_score)",
+                    "format": {
+                      "type": "number-plain",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 0
+                      },
+                      "abbreviation": "none"
+                    },
+                    "displayName": "Score"
+                  },
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "inactivity_tier",
+                    "displayName": "Tier",
+                    "style": {
+                      "type": "basic",
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Recent (0-60 days)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": "#00A972"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Moderate (61-120 days)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": {
+                            "themeColorType": "visualizationColors",
+                            "position": 2
+                          }
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "Long-term (120+ days)"
+                            },
+                            "operator": "="
+                          },
+                          "backgroundColor": {
+                            "themeColorType": "visualizationColors",
+                            "position": 4
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "fieldName": "last_active_date",
+                    "displayName": "Last Active"
+                  },
+                  {
+                    "fieldName": "sum(total_submissions)",
+                    "displayName": "Total Submissions"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 8
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "platform",
+      "displayName": "Platform",
+      "layout": [
+        {
+          "widget": {
+            "name": "browser_pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "sum(submissions)",
+                      "expression": "SUM(`submissions`)"
+                    },
+                    {
+                      "name": "browser",
+                      "expression": "`browser`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "Browser Distribution",
+                "showTitle": true,
+                "description": "Total submissions by browser across all users",
+                "showDescription": true
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "sum(submissions)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Submissions"
+                },
+                "color": {
+                  "fieldName": "browser",
+                  "displayName": "Browser",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "os_pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "sum(submissions)",
+                      "expression": "SUM(`submissions`)"
+                    },
+                    {
+                      "name": "os",
+                      "expression": "`os`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "Operating System Distribution",
+                "showTitle": true,
+                "description": "Total submissions by operating system",
+                "showDescription": true
+              },
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "sum(submissions)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Submissions"
+                },
+                "color": {
+                  "fieldName": "os",
+                  "displayName": "OS",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "browser_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "596c7066",
+                  "fields": [
+                    {
+                      "name": "browser",
+                      "expression": "`browser`"
+                    },
+                    {
+                      "name": "monthly(event_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_date`)"
+                    },
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Browser Usage Over Time",
+                "showTitle": true,
+                "description": "Monthly browser share as percent of total submissions",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "percent-stack"
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(event_date)",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(event_id)",
+                  "displayName": "Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "browser",
+                  "displayName": "Browser",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "platform_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Platform\n",
+                "Browser and operating system usage across Genie Code."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "combo_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## User Platform Details\n",
+                "Unique user, browser, and operating system combinations ranked by submission volume."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "user_browser_os",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "browser",
+                      "expression": "`browser`"
+                    },
+                    {
+                      "name": "os",
+                      "expression": "`os`"
+                    },
+                    {
+                      "name": "sum(submissions)",
+                      "expression": "SUM(`submissions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "User / Browser / OS Combinations",
+                "showTitle": true,
+                "description": "Per-user breakdown of browser, OS, and environment",
+                "showDescription": true
+              },
+              "version": 2,
+              "rowsPerPage": 25,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Environment"
+                  },
+                  {
+                    "fieldName": "browser",
+                    "displayName": "Browser"
+                  },
+                  {
+                    "fieldName": "os",
+                    "displayName": "OS"
+                  },
+                  {
+                    "fieldName": "sum(submissions)",
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "compact"
+                    },
+                    "displayName": "Submissions"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "users_tracked",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Users Tracked",
+                "showTitle": true,
+                "description": "Distinct users with platform data recorded",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "platform_combos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "countdistinct(browser_os_combo)",
+                      "expression": "COUNT(DISTINCT `browser_os_combo`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Platform Combos",
+                "showTitle": true,
+                "description": "Unique browser + OS combinations in use",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(browser_os_combo)",
+                  "displayName": "Combos"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "edge_share_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "user_platform",
+                  "fields": [
+                    {
+                      "name": "measure(edge_share)",
+                      "expression": "MEASURE(`edge_share`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Edge Browser Share",
+                "showTitle": true,
+                "description": "% of all submissions from Edge",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(edge_share)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "Edge %"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "cross_env",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cross_env",
+                  "fields": [
+                    {
+                      "name": "usage_pattern",
+                      "expression": "`usage_pattern`"
+                    },
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Cross-Environment Usage",
+                "showTitle": true,
+                "description": "How many environments each user works across",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "usage_pattern",
+                  "displayName": "Usage Pattern",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV only",
+                        "QA only",
+                        "PROD only",
+                        "DEV + QA",
+                        "DEV + PROD",
+                        "PROD + QA",
+                        "All 3 (DEV + QA + PROD)"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "usage_pattern",
+                  "legend": {
+                    "hide": true
+                  },
+                  "displayName": "Pattern",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "DEV only",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA only",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD only",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "DEV + QA",
+                        "color": "#7E57C2"
+                      },
+                      {
+                        "value": "DEV + PROD",
+                        "color": "#26A69A"
+                      },
+                      {
+                        "value": "PROD + QA",
+                        "color": "#EF5350"
+                      },
+                      {
+                        "value": "All 3 (DEV + QA + PROD)",
+                        "color": "#FFD600"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": true
+  }
+}
