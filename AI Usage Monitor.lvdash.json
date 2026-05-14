@@ -1,0 +1,5676 @@
+{
+  "datasets": [
+    {
+      "name": "billing_ai",
+      "displayName": "AI Billing",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', u.usage_date) AS month,\n",
+        "  CASE u.billing_origin_product\n",
+        "    WHEN 'MODEL_SERVING' THEN 'Model Serving'\n",
+        "    WHEN 'AI_FUNCTIONS' THEN 'AI Functions'\n",
+        "    WHEN 'AI_GATEWAY' THEN 'AI Gateway'\n",
+        "    WHEN 'AGENT_BRICKS' THEN 'Agent Bricks'\n",
+        "    WHEN 'AGENT_EVALUATION' THEN 'Agent Evaluation'\n",
+        "    WHEN 'SUPERVISOR_AGENT' THEN 'Supervisor Agent'\n",
+        "    ELSE u.billing_origin_product\n",
+        "  END AS billing_origin_product,\n",
+        "  CASE u.sku_name\n",
+        "    WHEN 'ENTERPRISE_ANTHROPIC_MODEL_SERVING' THEN 'Anthropic'\n",
+        "    WHEN 'ENTERPRISE_OPENAI_MODEL_SERVING' THEN 'OpenAI'\n",
+        "    WHEN 'ENTERPRISE_GEMINI_MODEL_SERVING' THEN 'Gemini'\n",
+        "    WHEN 'ENTERPRISE_SERVERLESS_REAL_TIME_INFERENCE_US_EAST_N_VIRGINIA' THEN 'Serverless (US East)'\n",
+        "    WHEN 'ENTERPRISE_SERVERLESS_REAL_TIME_INFERENCE_US_WEST_OREGON' THEN 'Serverless (US West)'\n",
+        "    ELSE u.sku_name\n",
+        "  END AS sku_name,\n",
+        "  CASE u.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE u.workspace_id\n",
+        "  END AS environment,\n",
+        "  SUM(u.usage_quantity) AS usage_quantity,\n",
+        "  ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)), 4) AS dollar_cost\n",
+        "FROM\n",
+        "  system.billing.usage u\n",
+        "    LEFT JOIN system.billing.list_prices lp\n",
+        "      ON u.sku_name = lp.sku_name\n",
+        "      AND u.usage_date >= CAST(lp.price_start_time AS DATE)\n",
+        "      AND (\n",
+        "        lp.price_end_time IS NULL\n",
+        "        OR u.usage_date < CAST(lp.price_end_time AS DATE)\n",
+        "      )\n",
+        "WHERE\n",
+        "  u.billing_origin_product IN (\n",
+        "    'AI_GATEWAY',\n",
+        "    'AI_FUNCTIONS',\n",
+        "    'MODEL_SERVING',\n",
+        "    'AGENT_BRICKS',\n",
+        "    'AGENT_EVALUATION',\n",
+        "    'SUPERVISOR_AGENT'\n",
+        "  )\n",
+        "  AND u.usage_date >= :date_range.min\n",
+        "  AND u.usage_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE u.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE u.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2,\n",
+        "  3,\n",
+        "  4\n",
+        "ORDER BY\n",
+        "  month"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ai_gateway",
+      "displayName": "AI Gateway Usage",
+      "queryLines": [
+        "SELECT\n",
+        "  ag.request_id,\n",
+        "  ag.event_time,\n",
+        "  ag.latency_ms,\n",
+        "  ag.destination_model,\n",
+        "  ag.input_tokens,\n",
+        "  ag.output_tokens,\n",
+        "  ag.total_tokens,\n",
+        "  ag.status_code,\n",
+        "  ag.requester,\n",
+        "  COALESCE(un.display_name, ag.requester) AS display_name,\n",
+        "  CASE ag.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE ag.workspace_id\n",
+        "  END AS environment\n",
+        "FROM\n",
+        "  system.ai_gateway.usage ag\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.user_display_names un\n",
+        "      ON ag.requester = un.email\n",
+        "WHERE\n",
+        "  CAST(ag.event_time AS DATE) >= :date_range.min\n",
+        "  AND CAST(ag.event_time AS DATE) <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE ag.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE ag.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ],
+      "columns": [
+        {
+          "displayName": "Gateway Success Rate",
+          "description": "Percentage of requests with HTTP 200 status code",
+          "expression": "CONCAT(CAST(ROUND(SUM(CASE WHEN `status_code` = 200 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS STRING), '%')"
+        },
+        {
+          "displayName": "Event Date",
+          "description": "Date extracted from event_time for daily aggregations",
+          "expression": "CAST(`event_time` AS DATE)"
+        },
+        {
+          "displayName": "Failed Requests",
+          "description": "Count of non-200 status code requests",
+          "expression": "SUM(CASE WHEN `status_code` != 200 THEN 1 ELSE 0 END)"
+        },
+        {
+          "displayName": "Error Rate %",
+          "description": "Percentage of requests with non-200 status",
+          "expression": "CONCAT(CAST(ROUND(SUM(CASE WHEN `status_code` != 200 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS STRING), '%')"
+        }
+      ]
+    },
+    {
+      "name": "assistant_events",
+      "displayName": "Assistant Events",
+      "queryLines": [
+        "SELECT\n",
+        "  ae.event_id,\n",
+        "  ae.event_date,\n",
+        "  ae.initiated_by,\n",
+        "  COALESCE(un.display_name, ae.initiated_by) AS display_name,\n",
+        "  CASE ae.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE ae.workspace_id\n",
+        "  END AS environment\n",
+        "FROM\n",
+        "  system.access.assistant_events ae\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.user_display_names un\n",
+        "      ON ae.initiated_by = un.email\n",
+        "WHERE\n",
+        "  ae.event_date >= :date_range.min\n",
+        "  AND ae.event_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE ae.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE ae.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ],
+      "columns": [
+        {
+          "displayName": "Avg Submissions/User",
+          "description": "Average submissions per unique user",
+          "expression": "COUNT(`event_id`) * 1.0 / COUNT(DISTINCT `initiated_by`)"
+        }
+      ]
+    },
+    {
+      "name": "usage_patterns",
+      "displayName": "Usage Patterns",
+      "queryLines": [
+        "SELECT\n",
+        "  DAYOFWEEK(event_time) AS day_of_week,\n",
+        "  DATE_FORMAT(event_time, 'EEE') AS day_name,\n",
+        "  HOUR(CONVERT_TIMEZONE('America/New_York', event_time)) AS hour_of_day_et,\n",
+        "  COUNT(*) AS request_count\n",
+        "FROM\n",
+        "  (\n",
+        "    SELECT\n",
+        "      event_time,\n",
+        "      workspace_id\n",
+        "    FROM\n",
+        "      system.access.assistant_events\n",
+        "    WHERE\n",
+        "      event_date >= :date_range.min\n",
+        "      AND event_date <= :date_range.max\n",
+        "      AND (\n",
+        "        COALESCE(array_size(:env_filter), 0) = 0\n",
+        "        OR array_contains(\n",
+        "          :env_filter,\n",
+        "          CASE workspace_id\n",
+        "            WHEN '1160807094185734' THEN 'DEV'\n",
+        "            WHEN '748821712601607' THEN 'QA'\n",
+        "            WHEN '759839464639728' THEN 'PROD'\n",
+        "            ELSE workspace_id\n",
+        "          END\n",
+        "        )\n",
+        "      )\n",
+        "    UNION ALL\n",
+        "    SELECT\n",
+        "      event_time,\n",
+        "      workspace_id\n",
+        "    FROM\n",
+        "      system.ai_gateway.usage\n",
+        "    WHERE\n",
+        "      CAST(event_time AS DATE) >= :date_range.min\n",
+        "      AND CAST(event_time AS DATE) <= :date_range.max\n",
+        "      AND (\n",
+        "        COALESCE(array_size(:env_filter), 0) = 0\n",
+        "        OR array_contains(\n",
+        "          :env_filter,\n",
+        "          CASE workspace_id\n",
+        "            WHEN '1160807094185734' THEN 'DEV'\n",
+        "            WHEN '748821712601607' THEN 'QA'\n",
+        "            WHEN '759839464639728' THEN 'PROD'\n",
+        "            ELSE workspace_id\n",
+        "          END\n",
+        "        )\n",
+        "      )\n",
+        "  ) combined\n",
+        "GROUP BY\n",
+        "  DAYOFWEEK(event_time),\n",
+        "  DATE_FORMAT(event_time, 'EEE'),\n",
+        "  HOUR(CONVERT_TIMEZONE('America/New_York', event_time))\n",
+        "ORDER BY\n",
+        "  day_of_week,\n",
+        "  hour_of_day_et"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "serving_endpoints",
+      "displayName": "Serving Endpoints",
+      "queryLines": [
+        "SELECT\n",
+        "  se.endpoint_name,\n",
+        "  se.served_entity_name,\n",
+        "  se.entity_type,\n",
+        "  se.entity_name,\n",
+        "  se.task,\n",
+        "  CONVERT_TIMEZONE('America/New_York', se.change_time) AS change_time_et,\n",
+        "  CASE se.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE se.workspace_id\n",
+        "  END AS environment\n",
+        "FROM\n",
+        "  system.serving.served_entities se\n",
+        "WHERE\n",
+        "  se.endpoint_delete_time IS NULL\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE se.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE se.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "ORDER BY\n",
+        "  se.change_time DESC"
+      ],
+      "parameters": [
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ],
+      "columns": [
+        {
+          "displayName": "Agent Share %",
+          "description": "Percentage of endpoints that are agent-type",
+          "expression": "CONCAT(CAST(ROUND(SUM(CASE WHEN `task` LIKE 'agent%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS STRING), '%')"
+        },
+        {
+          "displayName": "Agent Count",
+          "description": "Count of agent-type endpoints",
+          "expression": "SUM(CASE WHEN `task` LIKE 'agent%' THEN 1 ELSE 0 END)"
+        }
+      ]
+    },
+    {
+      "name": "genie_spaces",
+      "displayName": "Genie Spaces Usage",
+      "queryLines": [
+        "SELECT\n",
+        "  a.event_date,\n",
+        "  a.user_identity.email AS user_email,\n",
+        "  COALESCE(un.display_name, a.user_identity.email) AS display_name,\n",
+        "  a.action_name,\n",
+        "  a.request_params.space_id AS space_id,\n",
+        "  COALESCE(ln.display_name, a.request_params.space_id) AS space_name,\n",
+        "  a.request_params.conversation_id AS conversation_id,\n",
+        "  CASE a.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE a.workspace_id\n",
+        "  END AS environment\n",
+        "FROM\n",
+        "  system.access.audit a\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.user_display_names un\n",
+        "      ON a.user_identity.email = un.email\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.genie_space_names ln\n",
+        "      ON a.request_params.space_id = ln.space_id\n",
+        "WHERE\n",
+        "  a.service_name = 'aibiGenie'\n",
+        "  AND a.action_name IN (\n",
+        "    'genieStartConversationMessage', 'createConversationMessage', 'createConversation'\n",
+        "  )\n",
+        "  AND a.event_date >= :date_range.min\n",
+        "  AND a.event_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE a.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE a.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "genie_spaces_top_users",
+      "displayName": "Genie Spaces Top Users",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(un.display_name, a.user_identity.email) AS display_name,\n",
+        "  COALESCE(ln.display_name, a.request_params.space_id) AS space_name,\n",
+        "  COUNT(a.request_params.conversation_id) AS queries\n",
+        "FROM\n",
+        "  system.access.audit a\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.user_display_names un\n",
+        "      ON a.user_identity.email = un.email\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.genie_space_names ln\n",
+        "      ON a.request_params.space_id = ln.space_id\n",
+        "WHERE\n",
+        "  a.service_name = 'aibiGenie'\n",
+        "  AND a.action_name IN (\n",
+        "    'genieStartConversationMessage', 'createConversationMessage', 'createConversation'\n",
+        "  )\n",
+        "  AND a.event_date >= :date_range.min\n",
+        "  AND a.event_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE a.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE a.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  queries DESC\n",
+        "LIMIT 20"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "genie_spaces_daily",
+      "displayName": "Genie Spaces Daily",
+      "queryLines": [
+        "SELECT\n",
+        "  a.event_date,\n",
+        "  CASE a.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE a.workspace_id\n",
+        "  END AS environment,\n",
+        "  COUNT(*) AS query_count,\n",
+        "  COUNT(DISTINCT a.user_identity.email) AS unique_users\n",
+        "FROM\n",
+        "  system.access.audit a\n",
+        "WHERE\n",
+        "  a.service_name = 'aibiGenie'\n",
+        "  AND a.action_name IN (\n",
+        "    'genieStartConversationMessage', 'createConversationMessage', 'createConversation'\n",
+        "  )\n",
+        "  AND a.event_date >= :date_range.min\n",
+        "  AND a.event_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE a.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE a.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  a.event_date,\n",
+        "  CASE a.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE a.workspace_id\n",
+        "  END\n",
+        "ORDER BY\n",
+        "  a.event_date"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "env_comparison",
+      "displayName": "Environment Comparison",
+      "queryLines": [
+        "WITH assistant_metrics AS (\n",
+        "  SELECT\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "    END AS environment,\n",
+        "    COUNT(*) AS genie_code_requests,\n",
+        "    COUNT(DISTINCT initiated_by) AS genie_code_users\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    event_date >= CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "genie_spaces_metrics AS (\n",
+        "  SELECT\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "    END AS environment,\n",
+        "    COUNT(*) AS genie_spaces_queries,\n",
+        "    COUNT(DISTINCT user_identity.email) AS genie_spaces_users\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND action_name IN (\n",
+        "      'genieStartConversationMessage', 'createConversationMessage', 'createConversation'\n",
+        "    )\n",
+        "    AND event_date >= CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "  GROUP BY\n",
+        "    1\n",
+        ")\n",
+        "SELECT\n",
+        "  a.environment,\n",
+        "  a.genie_code_requests,\n",
+        "  a.genie_code_users,\n",
+        "  COALESCE(g.genie_spaces_queries, 0) AS genie_spaces_queries,\n",
+        "  COALESCE(g.genie_spaces_users, 0) AS genie_spaces_users\n",
+        "FROM\n",
+        "  assistant_metrics a\n",
+        "    LEFT JOIN genie_spaces_metrics g\n",
+        "      ON a.environment = g.environment\n",
+        "ORDER BY\n",
+        "  CASE a.environment\n",
+        "    WHEN 'DEV' THEN 1\n",
+        "    WHEN 'QA' THEN 2\n",
+        "    WHEN 'PROD' THEN 3\n",
+        "  END"
+      ]
+    },
+    {
+      "name": "assistant_events_top_users",
+      "displayName": "Top Genie Code Users",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(un.display_name, ae.initiated_by) AS display_name,\n",
+        "  CASE ae.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE ae.workspace_id\n",
+        "  END AS environment,\n",
+        "  COUNT(*) AS submission_count\n",
+        "FROM\n",
+        "  system.access.assistant_events ae\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.user_display_names un\n",
+        "      ON ae.initiated_by = un.email\n",
+        "WHERE\n",
+        "  ae.event_date >= :date_range.min\n",
+        "  AND ae.event_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE ae.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE ae.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  submission_count DESC\n",
+        "LIMIT 20"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "growth_periods",
+      "displayName": "Growth Periods",
+      "queryLines": [
+        "WITH asst_raw AS ( -- Single scan: assistant_events 90d, tagged by period\n",
+        "  SELECT\n",
+        "    initiated_by,\n",
+        "    CASE\n",
+        "      WHEN event_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN 'current'\n",
+        "      WHEN event_date >= CURRENT_DATE - INTERVAL 60 DAYS THEN 'prior'\n",
+        "      ELSE 'earlier'\n",
+        "    END AS period\n",
+        "  FROM\n",
+        "    system.access.assistant_events\n",
+        "  WHERE\n",
+        "    event_date >= CURRENT_DATE - INTERVAL 90 DAYS\n",
+        "),\n",
+        "-- Single scan: ai_gateway 90d, tagged by period (may be empty)\n",
+        "gw_raw AS (\n",
+        "  SELECT\n",
+        "    requester,\n",
+        "    CASE\n",
+        "      WHEN CAST(event_time AS DATE) >= CURRENT_DATE - INTERVAL 30 DAYS THEN 'current'\n",
+        "      WHEN CAST(event_time AS DATE) >= CURRENT_DATE - INTERVAL 60 DAYS THEN 'prior'\n",
+        "      ELSE 'earlier'\n",
+        "    END AS period\n",
+        "  FROM\n",
+        "    system.ai_gateway.usage\n",
+        "  WHERE\n",
+        "    CAST(event_time AS DATE) >= CURRENT_DATE - INTERVAL 90 DAYS\n",
+        "),\n",
+        "-- Combined user IDs per period\n",
+        "all_users AS (\n",
+        "  SELECT\n",
+        "    initiated_by AS user_id,\n",
+        "    period\n",
+        "  FROM\n",
+        "    asst_raw\n",
+        "  UNION\n",
+        "  SELECT\n",
+        "    requester AS user_id,\n",
+        "    period\n",
+        "  FROM\n",
+        "    gw_raw\n",
+        "),\n",
+        "-- Aggregates per period\n",
+        "asst_agg AS (\n",
+        "  SELECT\n",
+        "    period,\n",
+        "    COUNT(*) AS requests\n",
+        "  FROM\n",
+        "    asst_raw\n",
+        "  GROUP BY\n",
+        "    period\n",
+        "),\n",
+        "gw_agg AS (\n",
+        "  SELECT\n",
+        "    period,\n",
+        "    COUNT(*) AS requests\n",
+        "  FROM\n",
+        "    gw_raw\n",
+        "  GROUP BY\n",
+        "    period\n",
+        "),\n",
+        "users_agg AS (\n",
+        "  SELECT\n",
+        "    period,\n",
+        "    COUNT(DISTINCT user_id) AS unique_users\n",
+        "  FROM\n",
+        "    all_users\n",
+        "  WHERE\n",
+        "    user_id IS NOT NULL\n",
+        "  GROUP BY\n",
+        "    period\n",
+        "),\n",
+        "-- Single scan: billing 60d, tagged by period with product-level splits\n",
+        "cost_agg AS (\n",
+        "  SELECT\n",
+        "    CASE\n",
+        "      WHEN u.usage_date >= CURRENT_DATE - INTERVAL 30 DAYS THEN 'current'\n",
+        "      ELSE 'prior'\n",
+        "    END AS period,\n",
+        "    SUM(u.usage_quantity) AS total_dbus,\n",
+        "    ROUND(\n",
+        "      SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)),\n",
+        "      2\n",
+        "    ) AS total_dollars,\n",
+        "    SUM(\n",
+        "      CASE\n",
+        "        WHEN\n",
+        "          u.billing_origin_product IN ('AGENT_BRICKS', 'AGENT_EVALUATION', 'SUPERVISOR_AGENT')\n",
+        "        THEN\n",
+        "          u.usage_quantity\n",
+        "        ELSE 0\n",
+        "      END\n",
+        "    ) AS agent_dbus,\n",
+        "    ROUND(\n",
+        "      SUM(\n",
+        "        CASE\n",
+        "          WHEN\n",
+        "            u.billing_origin_product IN ('AGENT_BRICKS', 'AGENT_EVALUATION', 'SUPERVISOR_AGENT')\n",
+        "          THEN\n",
+        "            u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)\n",
+        "          ELSE 0\n",
+        "        END\n",
+        "      ),\n",
+        "      2\n",
+        "    ) AS agent_dollars,\n",
+        "    SUM(\n",
+        "      CASE\n",
+        "        WHEN u.billing_origin_product = 'MODEL_SERVING' THEN u.usage_quantity\n",
+        "        ELSE 0\n",
+        "      END\n",
+        "    ) AS serving_dbus,\n",
+        "    ROUND(\n",
+        "      SUM(\n",
+        "        CASE\n",
+        "          WHEN\n",
+        "            u.billing_origin_product = 'MODEL_SERVING'\n",
+        "          THEN\n",
+        "            u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)\n",
+        "          ELSE 0\n",
+        "        END\n",
+        "      ),\n",
+        "      2\n",
+        "    ) AS serving_dollars\n",
+        "  FROM\n",
+        "    system.billing.usage u\n",
+        "      LEFT JOIN system.billing.list_prices lp\n",
+        "        ON u.sku_name = lp.sku_name\n",
+        "        AND u.usage_date >= CAST(lp.price_start_time AS DATE)\n",
+        "        AND (\n",
+        "          lp.price_end_time IS NULL\n",
+        "          OR u.usage_date < CAST(lp.price_end_time AS DATE)\n",
+        "        )\n",
+        "  WHERE\n",
+        "    u.billing_origin_product IN (\n",
+        "      'AI_GATEWAY',\n",
+        "      'AI_FUNCTIONS',\n",
+        "      'MODEL_SERVING',\n",
+        "      'AGENT_BRICKS',\n",
+        "      'AGENT_EVALUATION',\n",
+        "      'SUPERVISOR_AGENT'\n",
+        "    )\n",
+        "    AND u.usage_date >= CURRENT_DATE - INTERVAL 60 DAYS\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "-- Retention: current-period users who were also active in prior period\n",
+        "current_retained AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT c.user_id) AS retained_users\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT DISTINCT\n",
+        "        user_id\n",
+        "      FROM\n",
+        "        all_users\n",
+        "      WHERE\n",
+        "        period = 'current'\n",
+        "        AND user_id IS NOT NULL\n",
+        "    ) c\n",
+        "      INNER JOIN (\n",
+        "        SELECT DISTINCT\n",
+        "          user_id\n",
+        "        FROM\n",
+        "          all_users\n",
+        "        WHERE\n",
+        "          period = 'prior'\n",
+        "          AND user_id IS NOT NULL\n",
+        "      ) p\n",
+        "        ON c.user_id = p.user_id\n",
+        "),\n",
+        "-- Retention: prior-period users who were also active in earlier period\n",
+        "prior_retained AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT c.user_id) AS retained_users\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT DISTINCT\n",
+        "        user_id\n",
+        "      FROM\n",
+        "        all_users\n",
+        "      WHERE\n",
+        "        period = 'prior'\n",
+        "        AND user_id IS NOT NULL\n",
+        "    ) c\n",
+        "      INNER JOIN (\n",
+        "        SELECT DISTINCT\n",
+        "          user_id\n",
+        "        FROM\n",
+        "          all_users\n",
+        "        WHERE\n",
+        "          period = 'earlier'\n",
+        "          AND user_id IS NOT NULL\n",
+        "      ) p\n",
+        "        ON c.user_id = p.user_id\n",
+        "),\n",
+        "-- New users: users in current NOT in prior (and prior NOT in earlier)\n",
+        "current_new AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT c.user_id) AS new_users\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT DISTINCT\n",
+        "        user_id\n",
+        "      FROM\n",
+        "        all_users\n",
+        "      WHERE\n",
+        "        period = 'current'\n",
+        "        AND user_id IS NOT NULL\n",
+        "    ) c\n",
+        "      LEFT JOIN (\n",
+        "        SELECT DISTINCT\n",
+        "          user_id\n",
+        "        FROM\n",
+        "          all_users\n",
+        "        WHERE\n",
+        "          period = 'prior'\n",
+        "          AND user_id IS NOT NULL\n",
+        "      ) p\n",
+        "        ON c.user_id = p.user_id\n",
+        "  WHERE\n",
+        "    p.user_id IS NULL\n",
+        "),\n",
+        "prior_new AS (\n",
+        "  SELECT\n",
+        "    COUNT(DISTINCT c.user_id) AS new_users\n",
+        "  FROM\n",
+        "    (\n",
+        "      SELECT DISTINCT\n",
+        "        user_id\n",
+        "      FROM\n",
+        "        all_users\n",
+        "      WHERE\n",
+        "        period = 'prior'\n",
+        "        AND user_id IS NOT NULL\n",
+        "    ) c\n",
+        "      LEFT JOIN (\n",
+        "        SELECT DISTINCT\n",
+        "          user_id\n",
+        "        FROM\n",
+        "          all_users\n",
+        "        WHERE\n",
+        "          period = 'earlier'\n",
+        "          AND user_id IS NOT NULL\n",
+        "      ) p\n",
+        "        ON c.user_id = p.user_id\n",
+        "  WHERE\n",
+        "    p.user_id IS NULL\n",
+        "),\n",
+        "-- Period anchor to guarantee rows even when some CTEs are empty\n",
+        "periods AS (\n",
+        "  SELECT\n",
+        "    'current' AS period\n",
+        "  UNION ALL\n",
+        "  SELECT\n",
+        "    'prior' AS period\n",
+        ")\n",
+        "SELECT\n",
+        "  CASE p.period\n",
+        "    WHEN 'current' THEN DATE_TRUNC('MONTH', CURRENT_DATE)\n",
+        "    ELSE DATE_TRUNC('MONTH', CURRENT_DATE - INTERVAL 30 DAYS)\n",
+        "  END AS period_date,\n",
+        "  (COALESCE(ca.requests, 0) + COALESCE(cg.requests, 0)) AS total_requests,\n",
+        "  COALESCE(cu.unique_users, 0) AS unique_users,\n",
+        "  COALESCE(cc.total_dbus, 0) AS total_dbus,\n",
+        "  COALESCE(cc.total_dollars, 0) AS total_dollars,\n",
+        "  COALESCE(cc.agent_dbus, 0) AS agent_dbus,\n",
+        "  COALESCE(cc.agent_dollars, 0) AS agent_dollars,\n",
+        "  COALESCE(cc.serving_dbus, 0) AS serving_dbus,\n",
+        "  COALESCE(cc.serving_dollars, 0) AS serving_dollars,\n",
+        "  ROUND(COALESCE(cc.total_dbus, 0) / NULLIF(COALESCE(cu.unique_users, 0), 0), 1) AS dbus_per_user,\n",
+        "  ROUND(\n",
+        "    COALESCE(cc.total_dollars, 0) / NULLIF(COALESCE(cu.unique_users, 0), 0),\n",
+        "    2\n",
+        "  ) AS dollars_per_user,\n",
+        "  ROUND(\n",
+        "    (COALESCE(ca.requests, 0) + COALESCE(cg.requests, 0))\n",
+        "      * 1.0\n",
+        "      / NULLIF(COALESCE(cu.unique_users, 0), 0),\n",
+        "    1\n",
+        "  ) AS requests_per_user,\n",
+        "  ROUND(\n",
+        "    COALESCE(cc.total_dbus, 0) / NULLIF((COALESCE(ca.requests, 0) + COALESCE(cg.requests, 0)), 0),\n",
+        "    4\n",
+        "  ) AS dbus_per_request,\n",
+        "  CASE p.period\n",
+        "    WHEN\n",
+        "      'current'\n",
+        "    THEN\n",
+        "      ROUND(\n",
+        "        COALESCE(cr.retained_users, 0) * 100.0 / NULLIF(COALESCE(pu_prior.unique_users, 0), 0),\n",
+        "        1\n",
+        "      )\n",
+        "    ELSE\n",
+        "      ROUND(\n",
+        "        COALESCE(pr.retained_users, 0) * 100.0 / NULLIF(COALESCE(eu_earlier.unique_users, 0), 0),\n",
+        "        1\n",
+        "      )\n",
+        "  END AS retention_rate_pct,\n",
+        "  CASE p.period\n",
+        "    WHEN 'current' THEN COALESCE(cn.new_users, 0)\n",
+        "    ELSE COALESCE(pn.new_users, 0)\n",
+        "  END AS new_users\n",
+        "FROM\n",
+        "  periods p\n",
+        "    LEFT JOIN asst_agg ca\n",
+        "      ON ca.period = p.period\n",
+        "    LEFT JOIN gw_agg cg\n",
+        "      ON cg.period = p.period\n",
+        "    LEFT JOIN users_agg cu\n",
+        "      ON cu.period = p.period\n",
+        "    LEFT JOIN cost_agg cc\n",
+        "      ON cc.period = p.period\n",
+        "    LEFT JOIN current_retained cr\n",
+        "      ON p.period = 'current'\n",
+        "    LEFT JOIN prior_retained pr\n",
+        "      ON p.period = 'prior'\n",
+        "    LEFT JOIN current_new cn\n",
+        "      ON p.period = 'current'\n",
+        "    LEFT JOIN prior_new pn\n",
+        "      ON p.period = 'prior'\n",
+        "    LEFT JOIN users_agg pu_prior\n",
+        "      ON pu_prior.period = 'prior'\n",
+        "      AND p.period = 'current'\n",
+        "    LEFT JOIN users_agg eu_earlier\n",
+        "      ON eu_earlier.period = 'earlier'\n",
+        "      AND p.period = 'prior'\n",
+        "ORDER BY\n",
+        "  period_date DESC"
+      ]
+    },
+    {
+      "name": "cost_forecast",
+      "displayName": "AI Cost Forecast",
+      "queryLines": [
+        "WITH monthly_cost AS (\n",
+        "  SELECT\n",
+        "    DATE_TRUNC('MONTH', u.usage_date) AS ds,\n",
+        "    ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)), 2) AS total_cost\n",
+        "  FROM\n",
+        "    system.billing.usage u\n",
+        "      LEFT JOIN system.billing.list_prices lp\n",
+        "        ON u.sku_name = lp.sku_name\n",
+        "        AND u.usage_date >= CAST(lp.price_start_time AS DATE)\n",
+        "        AND (\n",
+        "          lp.price_end_time IS NULL\n",
+        "          OR u.usage_date < CAST(lp.price_end_time AS DATE)\n",
+        "        )\n",
+        "  WHERE\n",
+        "    u.billing_origin_product IN (\n",
+        "      'AI_GATEWAY',\n",
+        "      'AI_FUNCTIONS',\n",
+        "      'MODEL_SERVING',\n",
+        "      'AGENT_BRICKS',\n",
+        "      'AGENT_EVALUATION',\n",
+        "      'SUPERVISOR_AGENT'\n",
+        "    )\n",
+        "    AND u.usage_date < DATE_TRUNC('MONTH', CURRENT_DATE)\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "forecasted AS (\n",
+        "  SELECT\n",
+        "    *\n",
+        "  FROM\n",
+        "    ai_forecast(\n",
+        "      TABLE(monthly_cost),\n",
+        "      horizon => DATE_TRUNC('MONTH', CURRENT_DATE) + INTERVAL 2 MONTHS,\n",
+        "      time_col => 'ds',\n",
+        "      value_col => 'total_cost',\n",
+        "      frequency => 'month',\n",
+        "      parameters => '{\"global_floor\": 0}'\n",
+        "    )\n",
+        ")\n",
+        "SELECT\n",
+        "  ds,\n",
+        "  total_cost AS actual,\n",
+        "  CAST(NULL AS DOUBLE) AS forecast,\n",
+        "  CAST(NULL AS DOUBLE) AS forecast_upper,\n",
+        "  CAST(NULL AS DOUBLE) AS forecast_lower\n",
+        "FROM\n",
+        "  monthly_cost\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  ds,\n",
+        "  CAST(NULL AS DOUBLE),\n",
+        "  total_cost,\n",
+        "  total_cost,\n",
+        "  total_cost\n",
+        "FROM\n",
+        "  monthly_cost\n",
+        "WHERE\n",
+        "  ds\n",
+        "    = (\n",
+        "      SELECT\n",
+        "        MAX(ds)\n",
+        "      FROM\n",
+        "        monthly_cost\n",
+        "    )\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  ds,\n",
+        "  CAST(NULL AS DOUBLE),\n",
+        "  total_cost_forecast AS forecast,\n",
+        "  total_cost_upper AS forecast_upper,\n",
+        "  total_cost_lower AS forecast_lower\n",
+        "FROM\n",
+        "  forecasted\n",
+        "ORDER BY\n",
+        "  ds"
+      ]
+    },
+    {
+      "name": "cost_by_sku",
+      "displayName": "Cost by SKU (Sorted)",
+      "queryLines": [
+        "SELECT\n",
+        "  CASE u.sku_name\n",
+        "    WHEN 'ENTERPRISE_ANTHROPIC_MODEL_SERVING' THEN 'Anthropic'\n",
+        "    WHEN 'ENTERPRISE_OPENAI_MODEL_SERVING' THEN 'OpenAI'\n",
+        "    WHEN 'ENTERPRISE_GEMINI_MODEL_SERVING' THEN 'Gemini'\n",
+        "    WHEN 'ENTERPRISE_SERVERLESS_REAL_TIME_INFERENCE_US_EAST_N_VIRGINIA' THEN 'Serverless (US East)'\n",
+        "    WHEN 'ENTERPRISE_SERVERLESS_REAL_TIME_INFERENCE_US_WEST_OREGON' THEN 'Serverless (US West)'\n",
+        "    ELSE u.sku_name\n",
+        "  END AS sku_name,\n",
+        "  CASE u.billing_origin_product\n",
+        "    WHEN 'MODEL_SERVING' THEN 'Model Serving'\n",
+        "    WHEN 'SUPERVISOR_AGENT' THEN 'Supervisor Agent'\n",
+        "    WHEN 'AI_FUNCTIONS' THEN 'AI Functions'\n",
+        "    WHEN 'AI_GATEWAY' THEN 'AI Gateway'\n",
+        "    WHEN 'AGENT_BRICKS' THEN 'Agent Bricks'\n",
+        "    WHEN 'AGENT_EVALUATION' THEN 'Agent Evaluation'\n",
+        "    ELSE u.billing_origin_product\n",
+        "  END AS billing_origin_product,\n",
+        "  CASE u.workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE u.workspace_id\n",
+        "  END AS environment,\n",
+        "  ROUND(SUM(u.usage_quantity), 2) AS total_dbus,\n",
+        "  ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, 0)), 2) AS dollar_cost\n",
+        "FROM\n",
+        "  system.billing.usage u\n",
+        "    LEFT JOIN system.billing.list_prices lp\n",
+        "      ON u.sku_name = lp.sku_name\n",
+        "      AND u.usage_date >= CAST(lp.price_start_time AS DATE)\n",
+        "      AND (\n",
+        "        lp.price_end_time IS NULL\n",
+        "        OR u.usage_date < CAST(lp.price_end_time AS DATE)\n",
+        "      )\n",
+        "WHERE\n",
+        "  u.billing_origin_product IN (\n",
+        "    'AI_GATEWAY',\n",
+        "    'AI_FUNCTIONS',\n",
+        "    'MODEL_SERVING',\n",
+        "    'AGENT_BRICKS',\n",
+        "    'AGENT_EVALUATION',\n",
+        "    'SUPERVISOR_AGENT'\n",
+        "  )\n",
+        "  AND u.usage_date >= :date_range.min\n",
+        "  AND u.usage_date <= :date_range.max\n",
+        "  AND (\n",
+        "    COALESCE(array_size(:env_filter), 0) = 0\n",
+        "    OR array_contains(\n",
+        "      :env_filter,\n",
+        "      CASE u.workspace_id\n",
+        "        WHEN '1160807094185734' THEN 'DEV'\n",
+        "        WHEN '748821712601607' THEN 'QA'\n",
+        "        WHEN '759839464639728' THEN 'PROD'\n",
+        "        ELSE u.workspace_id\n",
+        "      END\n",
+        "    )\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2,\n",
+        "  3\n",
+        "ORDER BY\n",
+        "  dollar_cost DESC"
+      ],
+      "parameters": [
+        {
+          "displayName": "Date Range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-30d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "Environment",
+          "keyword": "env_filter",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "39faf190",
+      "displayName": "Executive Summary",
+      "layout": [
+        {
+          "widget": {
+            "name": "data_freshness",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "fields": [
+                    {
+                      "name": "max(event_date)",
+                      "expression": "MAX(`event_date`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Data Through"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(event_date)",
+                  "format": {
+                    "type": "date",
+                    "date": "locale-short-month"
+                  },
+                  "displayName": "Latest Date"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_requests",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(total_requests)",
+                      "expression": "SUM(`total_requests`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total AI Requests",
+                "showDescription": true,
+                "description": "Genie Code + Gateway · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_requests)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  },
+                  "displayName": "Requests"
+                },
+                "target": {
+                  "fieldName": "sum(total_requests)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(unique_users)",
+                      "expression": "SUM(`unique_users`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Unique AI Users",
+                "showDescription": true,
+                "description": "Distinct users across all AI features · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(unique_users)",
+                  "displayName": "Users"
+                },
+                "target": {
+                  "fieldName": "sum(unique_users)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(total_dbus)",
+                      "expression": "SUM(`total_dbus`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total AI DBUs",
+                "showDescription": true,
+                "description": "All AI product consumption · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_dbus)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "DBUs"
+                },
+                "target": {
+                  "fieldName": "sum(total_dbus)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "other_ai_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "fields": [
+                    {
+                      "name": "billing_origin_product",
+                      "expression": "`billing_origin_product`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(dollar_cost)",
+                      "expression": "SUM(`dollar_cost`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_origin_product` != 'Model Serving'"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "title": "Monthly AI Products Cost ($)",
+                "showTitle": true,
+                "showDescription": true,
+                "description": "All products excl. Model Serving · Responds to date and environment filters"
+              },
+              "version": 3,
+              "mark": {
+                "layout": "stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "axis": {
+                    "title": "Month"
+                  },
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(dollar_cost)",
+                  "axis": {
+                    "title": "USD"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "billing_origin_product",
+                  "displayName": "Product",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Model Serving",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "AI Functions",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "AI Gateway",
+                        "color": "#7B1FA2"
+                      },
+                      {
+                        "value": "Agent Bricks",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Agent Evaluation",
+                        "color": "#D32F2F"
+                      },
+                      {
+                        "value": "Supervisor Agent",
+                        "color": "#0097A7"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "engagement_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Engagement & Retention\n",
+                "30-day metrics comparing current vs prior period."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_avg_req",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(requests_per_user)",
+                      "expression": "SUM(`requests_per_user`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Avg Requests/User",
+                "showDescription": true,
+                "description": "Total requests ÷ unique users · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(requests_per_user)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "Requests/User"
+                },
+                "target": {
+                  "fieldName": "sum(requests_per_user)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_retention",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(retention_rate_pct)",
+                      "expression": "SUM(`retention_rate_pct`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Retention Rate",
+                "showDescription": true,
+                "description": "% of prior-period users active this period · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(retention_rate_pct)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{ @formatted }}%",
+                  "displayName": "%"
+                },
+                "target": {
+                  "fieldName": "sum(retention_rate_pct)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 13,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "patterns_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Usage Patterns\n",
+                "When are AI features used most? All times in Eastern Time (ET)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "dow_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "usage_patterns",
+                  "fields": [
+                    {
+                      "name": "day_name",
+                      "expression": "`day_name`"
+                    },
+                    {
+                      "name": "sum(request_count)",
+                      "expression": "SUM(`request_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Requests by Day of Week"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day_name",
+                  "displayName": "Day",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Mon",
+                        "Tue",
+                        "Wed",
+                        "Thu",
+                        "Fri",
+                        "Sat",
+                        "Sun"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(request_count)",
+                  "displayName": "Requests",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "hour_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "usage_patterns",
+                  "fields": [
+                    {
+                      "name": "hour_of_day_et",
+                      "expression": "`hour_of_day_et`"
+                    },
+                    {
+                      "name": "sum(request_count)",
+                      "expression": "SUM(`request_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Requests by Hour (ET)"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour_of_day_et",
+                  "displayName": "Hour",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(request_count)",
+                  "displayName": "Requests",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 21,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_cost_per_request",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(dbus_per_request)",
+                      "expression": "SUM(`dbus_per_request`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Cost per Request",
+                "showDescription": true,
+                "description": "Total DBUs ÷ total requests · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(dbus_per_request)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "none",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 4
+                    }
+                  },
+                  "displayName": "DBUs/Request"
+                },
+                "target": {
+                  "fieldName": "sum(dbus_per_request)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 13,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "env_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Adoption by Environment\n",
+                "Side-by-side 30-day usage for each workspace (fixed window, not affected by date filter)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "env_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "env_comparison",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "genie_code_requests",
+                      "expression": "`genie_code_requests`"
+                    },
+                    {
+                      "name": "genie_code_users",
+                      "expression": "`genie_code_users`"
+                    },
+                    {
+                      "name": "genie_spaces_queries",
+                      "expression": "`genie_spaces_queries`"
+                    },
+                    {
+                      "name": "genie_spaces_users",
+                      "expression": "`genie_spaces_users`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Adoption by Environment (30d)"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Environment"
+                  },
+                  {
+                    "fieldName": "genie_code_requests",
+                    "displayName": "Code Requests"
+                  },
+                  {
+                    "fieldName": "genie_code_users",
+                    "displayName": "Code Users"
+                  },
+                  {
+                    "fieldName": "genie_spaces_queries",
+                    "displayName": "Spaces Queries"
+                  },
+                  {
+                    "fieldName": "genie_spaces_users",
+                    "displayName": "Spaces Users"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 29,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "cpu_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(dbus_per_user)",
+                      "expression": "SUM(`dbus_per_user`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Cost per User (DBUs)",
+                "showDescription": true,
+                "description": "Total DBUs ÷ unique users · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(dbus_per_user)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "DBUs/User"
+                },
+                "target": {
+                  "fieldName": "sum(dbus_per_user)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_dollar_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(total_dollars)",
+                      "expression": "SUM(`total_dollars`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total AI Cost ($)",
+                "showDescription": true,
+                "description": "All AI products (list price) · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_dollars)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    },
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD"
+                },
+                "target": {
+                  "fieldName": "sum(total_dollars)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_new_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "New Users",
+                "showDescription": true,
+                "description": "Users not seen in prior period · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(new_users)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact"
+                  },
+                  "displayName": "New Users"
+                },
+                "target": {
+                  "fieldName": "sum(new_users)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_cost_per_user_dollar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(dollars_per_user)",
+                      "expression": "SUM(`dollars_per_user`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Cost per User ($)",
+                "showDescription": true,
+                "description": "Total dollar cost ÷ unique users · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(dollars_per_user)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "$/User"
+                },
+                "target": {
+                  "fieldName": "sum(dollars_per_user)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 16,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "page_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## AI Usage Monitor\n",
+                "Cross-workspace AI feature adoption, cost, and infrastructure at a glance.\n",
+                "\n",
+                "**Deep Dives:** [Genie Code Adoption](https://rai-qa.cloud.databricks.com/dashboardsv3/01f14a3cab8e1775858ba6c67419c3fa/published?o=748821712601607) · [Genie Spaces Adoption](https://rai-qa.cloud.databricks.com/dashboardsv3/01f14e0ddaa21d03983b7789a783d0b6/published?o=748821712601607)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "adoption",
+      "displayName": "Adoption",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Adoption\n",
+                "Who is using AI and how? Genie Code (in-editor assistant) and Genie Spaces (conversational analytics) activity, contributors, and trends.\n",
+                "\n",
+                "**Detailed Dashboards:** [Genie Code Adoption](https://rai-qa.cloud.databricks.com/dashboardsv3/01f14a3cab8e1775858ba6c67419c3fa/published?o=748821712601607) · [Genie Spaces Adoption](https://rai-qa.cloud.databricks.com/dashboardsv3/01f14e0ddaa21d03983b7789a783d0b6/published?o=748821712601607)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_submissions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "fields": [
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Genie Code Submissions",
+                "showDescription": true,
+                "description": "Total prompts submitted to in-editor assistant"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(event_id)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  },
+                  "displayName": "Submissions"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_code_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "fields": [
+                    {
+                      "name": "countdistinct(initiated_by)",
+                      "expression": "COUNT(DISTINCT `initiated_by`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Genie Code Users",
+                "showDescription": true,
+                "description": "Distinct users of the in-editor assistant"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(initiated_by)",
+                  "displayName": "Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 3,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_space_queries",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "fields": [
+                    {
+                      "name": "count(conversation_id)",
+                      "expression": "COUNT(`conversation_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Genie Spaces Queries",
+                "showDescription": true,
+                "description": "Conversations and messages in Genie Spaces"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(conversation_id)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  },
+                  "displayName": "Queries"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_space_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "fields": [
+                    {
+                      "name": "countdistinct(display_name)",
+                      "expression": "COUNT(DISTINCT `display_name`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Genie Spaces Users",
+                "showDescription": true,
+                "description": "Distinct users across all spaces"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(display_name)",
+                  "displayName": "Users"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 3,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "daily_submissions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "count(event_id)",
+                      "expression": "COUNT(`event_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Genie Code Submissions"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(event_id)",
+                  "displayName": "Submissions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "daily_space_queries",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces_daily",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "sum(query_count)",
+                      "expression": "SUM(`query_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Genie Spaces Queries"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(query_count)",
+                  "displayName": "Queries",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "top_code_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "assistant_events_top_users",
+                  "fields": [
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "submission_count",
+                      "expression": "`submission_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Top 20 Genie Code Users",
+                "showDescription": true,
+                "description": "Most active Genie Code users by submission count"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Environment"
+                  },
+                  {
+                    "fieldName": "submission_count",
+                    "displayName": "Submissions"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "top_space_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces_top_users",
+                  "fields": [
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "space_name",
+                      "expression": "`space_name`"
+                    },
+                    {
+                      "name": "queries",
+                      "expression": "`queries`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Top 20 Genie Spaces Users",
+                "showDescription": true,
+                "description": "Most active Genie Spaces users by query count"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "space_name",
+                    "displayName": "Space"
+                  },
+                  {
+                    "fieldName": "queries",
+                    "displayName": "Queries"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "genie_code_label",
+            "multilineTextboxSpec": {
+              "lines": [
+                "#### Genie Code"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "genie_spaces_label",
+            "multilineTextboxSpec": {
+              "lines": [
+                "#### Genie Spaces"
+              ]
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 1
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "cost",
+      "displayName": "Cost",
+      "layout": [
+        {
+          "widget": {
+            "name": "monthly_cost_product",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "fields": [
+                    {
+                      "name": "billing_origin_product",
+                      "expression": "`billing_origin_product`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(dollar_cost)",
+                      "expression": "SUM(`dollar_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Monthly AI Cost by Product ($)",
+                "showTitle": true
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "axis": {
+                    "title": "Month"
+                  },
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(dollar_cost)",
+                  "axis": {
+                    "title": "USD"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "billing_origin_product",
+                  "displayName": "Product",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Model Serving",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "AI Functions",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "AI Gateway",
+                        "color": "#7B1FA2"
+                      },
+                      {
+                        "value": "Agent Bricks",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Agent Evaluation",
+                        "color": "#D32F2F"
+                      },
+                      {
+                        "value": "Supervisor Agent",
+                        "color": "#0097A7"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cost_by_env",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "sum(dollar_cost)",
+                      "expression": "SUM(`dollar_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "AI Cost by Environment ($)"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(dollar_cost)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "legend": {
+                    "hide": true
+                  },
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly_agent_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "fields": [
+                    {
+                      "name": "billing_origin_product",
+                      "expression": "`billing_origin_product`"
+                    },
+                    {
+                      "name": "month",
+                      "expression": "`month`"
+                    },
+                    {
+                      "name": "sum(dollar_cost)",
+                      "expression": "SUM(`dollar_cost`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_origin_product` IN ('Agent Bricks', 'Agent Evaluation', 'Supervisor Agent')"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Monthly Agent Cost ($)",
+                "showTitle": true
+              },
+              "mark": {
+                "layout": "stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "month",
+                  "axis": {
+                    "title": "Month"
+                  },
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(dollar_cost)",
+                  "axis": {
+                    "title": "USD"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "billing_origin_product",
+                  "displayName": "Product",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Model Serving",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "AI Functions",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "AI Gateway",
+                        "color": "#7B1FA2"
+                      },
+                      {
+                        "value": "Agent Bricks",
+                        "color": "#4CAF50"
+                      },
+                      {
+                        "value": "Agent Evaluation",
+                        "color": "#D32F2F"
+                      },
+                      {
+                        "value": "Supervisor Agent",
+                        "color": "#0097A7"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 18,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cost_trend_line",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_forecast",
+                  "fields": [
+                    {
+                      "name": "ds",
+                      "expression": "`ds`"
+                    },
+                    {
+                      "name": "sum(actual)",
+                      "expression": "SUM(`actual`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`actual` IS NOT NULL"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Monthly AI Cost History ($)",
+                "showDescription": true,
+                "description": "All complete months since Jan 2024 · Not affected by date filter"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "ds",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(actual)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "drivers_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Top Cost Drivers\n",
+                "Which SKUs are driving the most spend? Breakdown by product, environment, and pricing tier."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 41,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "cost_drivers_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_by_sku",
+                  "fields": [
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    },
+                    {
+                      "name": "billing_origin_product",
+                      "expression": "`billing_origin_product`"
+                    },
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "total_dbus",
+                      "expression": "`total_dbus`"
+                    },
+                    {
+                      "name": "dollar_cost",
+                      "expression": "`dollar_cost`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Cost by SKU"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "sku_name",
+                    "format": {
+                      "type": "alias",
+                      "mappings": [
+                        {
+                          "value": "Anthropic",
+                          "alias": "Anthropic"
+                        },
+                        {
+                          "value": "OpenAI",
+                          "alias": "OpenAI"
+                        },
+                        {
+                          "value": "Gemini",
+                          "alias": "Gemini"
+                        },
+                        {
+                          "value": "Serverless (US East)",
+                          "alias": "Serverless (US East)"
+                        },
+                        {
+                          "value": "Serverless (US West)",
+                          "alias": "Serverless (US West)"
+                        }
+                      ]
+                    },
+                    "displayName": "SKU"
+                  },
+                  {
+                    "fieldName": "billing_origin_product",
+                    "displayName": "Product"
+                  },
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Env"
+                  },
+                  {
+                    "fieldName": "total_dbus",
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 2
+                      }
+                    },
+                    "contentAlignment": "right",
+                    "displayName": "Total DBUs"
+                  },
+                  {
+                    "fieldName": "dollar_cost",
+                    "format": {
+                      "type": "number-currency",
+                      "abbreviation": "none",
+                      "currencyCode": "USD",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 2
+                      }
+                    },
+                    "contentAlignment": "right",
+                    "displayName": "Cost"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 43,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly_trends_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Monthly Trends\n",
+                "Cost trajectory by product, environment, and agent breakdown."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "dollar_total",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(total_dollars)",
+                      "expression": "SUM(`total_dollars`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total AI Cost ($)",
+                "showDescription": true,
+                "description": "All AI products (list price) · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_dollars)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    },
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD"
+                },
+                "target": {
+                  "fieldName": "sum(total_dollars)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dollar_agent",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(agent_dollars)",
+                      "expression": "SUM(`agent_dollars`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Agent Cost ($)",
+                "showDescription": true,
+                "description": "Agent Bricks + Evaluation + Supervisor · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(agent_dollars)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    },
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD"
+                },
+                "target": {
+                  "fieldName": "sum(agent_dollars)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dollar_serving",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(serving_dollars)",
+                      "expression": "SUM(`serving_dollars`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Model Serving Cost ($)",
+                "showDescription": true,
+                "description": "Endpoint hosting + inference · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(serving_dollars)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    },
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD"
+                },
+                "target": {
+                  "fieldName": "sum(serving_dollars)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dbu_total",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(total_dbus)",
+                      "expression": "SUM(`total_dbus`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total AI DBUs",
+                "showDescription": true,
+                "description": "All AI product consumption · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_dbus)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "DBUs"
+                },
+                "target": {
+                  "fieldName": "sum(total_dbus)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dbu_agent",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(agent_dbus)",
+                      "expression": "SUM(`agent_dbus`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Agent DBUs",
+                "showDescription": true,
+                "description": "Agent Bricks + Evaluation + Supervisor · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(agent_dbus)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "DBUs"
+                },
+                "target": {
+                  "fieldName": "sum(agent_dbus)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 7,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dbu_serving",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "growth_periods",
+                  "fields": [
+                    {
+                      "name": "monthly(period_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    },
+                    {
+                      "name": "sum(serving_dbus)",
+                      "expression": "SUM(`serving_dbus`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `period_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Model Serving DBUs",
+                "showDescription": true,
+                "description": "Endpoint hosting + inference · Fixed 30d window"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(serving_dbus)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "DBUs"
+                },
+                "target": {
+                  "fieldName": "sum(serving_dbus)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  },
+                  "displayName": "vs Prior 30d"
+                },
+                "period": {
+                  "fieldName": "monthly(period_date)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 7,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dollar_section_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "#### Dollar Cost"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "dbu_section_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "#### DBU Consumption"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "serving_sku_breakdown",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "fields": [
+                    {
+                      "name": "sum(dollar_cost)",
+                      "expression": "SUM(`dollar_cost`)"
+                    },
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`billing_origin_product` = 'Model Serving'"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Model Serving Cost by SKU ($)",
+                "showDescription": true,
+                "description": "Anthropic vs OpenAI vs Gemini vs Serverless Inference breakdown"
+              },
+              "mark": {
+                "layout": "group"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(dollar_cost)",
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  },
+                  "displayName": "USD",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "sku_name",
+                  "displayName": "SKU",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "cost_forecast_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_forecast",
+                  "fields": [
+                    {
+                      "name": "ds",
+                      "expression": "`ds`"
+                    },
+                    {
+                      "name": "sum(actual)",
+                      "expression": "SUM(`actual`)"
+                    },
+                    {
+                      "name": "sum(forecast)",
+                      "expression": "SUM(`forecast`)"
+                    },
+                    {
+                      "name": "sum(forecast_upper)",
+                      "expression": "SUM(`forecast_upper`)"
+                    },
+                    {
+                      "name": "sum(forecast_lower)",
+                      "expression": "SUM(`forecast_lower`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "frame": {
+                "showTitle": true,
+                "title": "AI Cost Forecast ($)",
+                "showDescription": true,
+                "description": "Historical monthly cost with 2-month forward projection (95% confidence interval)"
+              },
+              "widgetType": "forecast-line",
+              "encodings": {
+                "x": {
+                  "fieldName": "ds",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "original": {
+                    "fieldName": "sum(actual)",
+                    "displayName": "Actual"
+                  },
+                  "prediction": {
+                    "fieldName": "sum(forecast)",
+                    "displayName": "Forecast"
+                  },
+                  "predictionUpper": {
+                    "fieldName": "sum(forecast_upper)",
+                    "displayName": "Upper Bound"
+                  },
+                  "predictionLower": {
+                    "fieldName": "sum(forecast_lower)",
+                    "displayName": "Lower Bound"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "abbreviation": "compact",
+                    "currencyCode": "USD"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 35,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "infrastructure",
+      "displayName": "Infrastructure",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Infrastructure\n",
+                "What AI infrastructure is deployed? Model serving endpoints, agent configurations, and AI Gateway traffic."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_endpoints",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "count(endpoint_name)",
+                      "expression": "COUNT(`endpoint_name`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total Active Endpoints",
+                "showDescription": true,
+                "description": "Currently deployed serving endpoints"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(endpoint_name)",
+                  "displayName": "Endpoints"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_agent_share",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "measure(Agent Share %)",
+                      "expression": "MEASURE(`Agent Share %`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Agent Infrastructure Share",
+                "showDescription": true,
+                "description": "% of endpoints that are agent-type"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Agent Share %)",
+                  "displayName": "Share"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 4,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_tasks",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "countdistinct(task)",
+                      "expression": "COUNT(DISTINCT `task`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Distinct Tasks",
+                "showDescription": true,
+                "description": "Unique task types across all endpoints"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(task)",
+                  "displayName": "Tasks"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 4,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "entity_type_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "entity_type",
+                      "expression": "`entity_type`"
+                    },
+                    {
+                      "name": "count(endpoint_name)",
+                      "expression": "COUNT(`endpoint_name`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Endpoints by Entity Type"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "entity_type",
+                  "displayName": "Entity Type",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(endpoint_name)",
+                  "displayName": "Endpoints",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "task_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "task",
+                      "expression": "`task`"
+                    },
+                    {
+                      "name": "count(endpoint_name)",
+                      "expression": "COUNT(`endpoint_name`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Endpoints by Task"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "task",
+                  "displayName": "Task",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(endpoint_name)",
+                  "displayName": "Endpoints",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "endpoints_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "endpoint_name",
+                      "expression": "`endpoint_name`"
+                    },
+                    {
+                      "name": "served_entity_name",
+                      "expression": "`served_entity_name`"
+                    },
+                    {
+                      "name": "entity_type",
+                      "expression": "`entity_type`"
+                    },
+                    {
+                      "name": "entity_name",
+                      "expression": "`entity_name`"
+                    },
+                    {
+                      "name": "task",
+                      "expression": "`task`"
+                    },
+                    {
+                      "name": "change_time_et",
+                      "expression": "`change_time_et`"
+                    },
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Active Serving Endpoints"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "endpoint_name",
+                    "displayName": "Endpoint"
+                  },
+                  {
+                    "fieldName": "served_entity_name",
+                    "displayName": "Entity"
+                  },
+                  {
+                    "fieldName": "entity_type",
+                    "displayName": "Type"
+                  },
+                  {
+                    "fieldName": "entity_name",
+                    "displayName": "Name"
+                  },
+                  {
+                    "fieldName": "task",
+                    "displayName": "Task"
+                  },
+                  {
+                    "fieldName": "change_time_et",
+                    "displayName": "Last Changed (ET)"
+                  },
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Env"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "gateway_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### AI Gateway\n",
+                "Centralized proxy for all LLM API calls — token usage, success rate, and traffic patterns.\n",
+                "\n",
+                "> **Note:** Data will populate once AI Gateway routes are configured. Widgets below are pre-wired and will auto-populate."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_success_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "measure(Gateway Success Rate)",
+                      "expression": "MEASURE(`Gateway Success Rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Gateway Success Rate",
+                "showDescription": true,
+                "description": "% of requests returning HTTP 200"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Gateway Success Rate)",
+                  "displayName": "Success"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_input_tokens",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "sum(input_tokens)",
+                      "expression": "SUM(`input_tokens`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Input Tokens",
+                "showDescription": true,
+                "description": "Prompt tokens consumed"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(input_tokens)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "Tokens"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 22,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_output_tokens",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "sum(output_tokens)",
+                      "expression": "SUM(`output_tokens`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Output Tokens",
+                "showDescription": true,
+                "description": "Completion tokens generated"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(output_tokens)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "Tokens"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 22,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "top_models",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "destination_model",
+                      "expression": "`destination_model`"
+                    },
+                    {
+                      "name": "sum(total_tokens)",
+                      "expression": "SUM(`total_tokens`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Top Models by Token Usage"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "destination_model",
+                  "displayName": "Model",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(total_tokens)",
+                  "displayName": "Tokens",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "top_users_tokens",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "display_name",
+                      "expression": "`display_name`"
+                    },
+                    {
+                      "name": "sum(total_tokens)",
+                      "expression": "SUM(`total_tokens`)"
+                    },
+                    {
+                      "name": "count(request_id)",
+                      "expression": "COUNT(`request_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Top Users by Tokens"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "display_name",
+                    "displayName": "User"
+                  },
+                  {
+                    "fieldName": "sum(total_tokens)",
+                    "displayName": "Tokens"
+                  },
+                  {
+                    "fieldName": "count(request_id)",
+                    "displayName": "Requests"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 25,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "health_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Health & Reliability\n",
+                "API performance metrics for AI Gateway endpoints."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 31,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "agent_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "fields": [
+                    {
+                      "name": "measure(Agent Count)",
+                      "expression": "MEASURE(`Agent Count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Agent Endpoints",
+                "showDescription": true,
+                "description": "Endpoints with agent-type tasks"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Agent Count)",
+                  "displayName": "Agents"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "latency",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "Event Date",
+                      "expression": "`Event Date`"
+                    },
+                    {
+                      "name": "avg(latency_ms)",
+                      "expression": "AVG(`latency_ms`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "API Latency (ms)"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "Event Date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(latency_ms)",
+                  "displayName": "Avg Latency (ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 33,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "volume",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "Event Date",
+                      "expression": "`Event Date`"
+                    },
+                    {
+                      "name": "count(request_id)",
+                      "expression": "COUNT(`request_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Request Volume"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Event Date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(request_id)",
+                  "displayName": "Requests",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 39,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_error_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "measure(Error Rate %)",
+                      "expression": "MEASURE(`Error Rate %`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Error Rate",
+                "showDescription": true,
+                "description": "% of non-200 responses"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Error Rate %)",
+                  "displayName": "Errors"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 22,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "error_line",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "fields": [
+                    {
+                      "name": "Event Date",
+                      "expression": "`Event Date`"
+                    },
+                    {
+                      "name": "measure(Failed Requests)",
+                      "expression": "MEASURE(`Failed Requests`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Daily Error Count",
+                "showDescription": true,
+                "description": "Non-200 responses per day"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Event Date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "measure(Failed Requests)",
+                  "displayName": "Failed Requests",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 39,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "serving_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Serving Endpoints\n",
+                "Active model serving infrastructure across all environments."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "glossary",
+      "displayName": "Glossary",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Glossary\n",
+                "Definitions for AI features, billing products, and data sources referenced in this dashboard."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "features_section",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### AI Features (What Users Interact With)\n",
+                "\n",
+                "**Genie Code** — The in-editor AI assistant embedded in notebooks, SQL editor, and file editor. Generates, explains, and debugs code based on natural language prompts. Every submission (prompt → response) is one event.\n",
+                "\n",
+                "*Use case: A data engineer types \"write a query to deduplicate this table\" and gets working SQL back instantly.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**Genie Spaces (AI/BI)** — Conversational analytics rooms where business users ask questions in plain English against curated datasets. No code required — Genie translates questions into SQL and returns tables/charts.\n",
+                "\n",
+                "*Use case: A finance analyst asks \"What was Q1 revenue by region?\" in a Genie Space connected to the sales fact table.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**AI Gateway** — A centralized proxy layer for all LLM API calls. Provides rate limiting, cost tracking, guardrails, and routing across model providers (OpenAI, Anthropic, etc.). Once configured, all programmatic LLM calls route through it.\n",
+                "\n",
+                "*Use case: A production application calls GPT-4 through AI Gateway, which enforces token limits, logs usage per user, and falls back to a secondary model if the primary is throttled.*"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "billing_section",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Billing Products (How Cost is Categorized)\n",
+                "\n",
+                "**Model Serving** (`MODEL_SERVING`) — Infrastructure cost for hosting and running ML/AI models on endpoints. Includes LLM inference (Foundation Model APIs), custom model serving, and feature serving. Dominates total AI spend (typically 90%+) because it covers every token processed by hosted models.\n",
+                "\n",
+                "*Why it's separated on the Executive Summary: Its magnitude dwarfs other products, making their trends invisible in a shared chart.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**AI Functions** (`AI_FUNCTIONS`) — DBUs consumed by SQL AI functions (`ai_query()`, `ai_generate()`, `ai_classify()`, `ai_extract()`, etc.) used directly in SQL queries and notebooks.\n",
+                "\n",
+                "*Use case:* `SELECT ai_classify(comment, ARRAY('positive','negative')) FROM reviews` *— classifies sentiment at query time.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**AI Gateway** (`AI_GATEWAY`) — DBUs for requests routed through AI Gateway endpoints (distinct from Model Serving, which covers the model compute itself).\n",
+                "\n",
+                "*Use case: Gateway overhead for logging, guardrail evaluation, and routing decisions on each API call.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**Agent Bricks** (`AGENT_BRICKS`) — Cost of running deployed agent endpoints built with frameworks like LangChain, LlamaIndex, or custom agent code hosted on Databricks Model Serving.\n",
+                "\n",
+                "*Use case: A customer-support agent endpoint that retrieves knowledge base articles, reasons through the query, and generates a response.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**Agent Evaluation** (`AGENT_EVALUATION`) — DBUs for evaluating agent quality using MLflow evaluation (correctness scoring, judge models, test harnesses).\n",
+                "\n",
+                "*Use case: Running 500 test cases against an agent to measure retrieval accuracy and answer faithfulness before promoting to production.*\n",
+                "\n",
+                "---\n",
+                "\n",
+                "**Supervisor Agent** (`SUPERVISOR_AGENT`) — Cost of multi-agent orchestration where a supervisor agent coordinates multiple sub-agents to complete complex tasks.\n",
+                "\n",
+                "*Use case: A \"research assistant\" supervisor that delegates to a retrieval agent, a summarization agent, and a citation-checking agent in sequence.*"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "environments_table",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Environments\n",
+                "\n",
+                "Three workspaces map to deployment stages. The global **Environment** filter slices all pages by these values.\n",
+                "\n",
+                "**DEV** — Workspace `1160807094185734` — Development and experimentation\n",
+                "\n",
+                "**QA** — Workspace `748821712601607` — Testing and validation\n",
+                "\n",
+                "**PROD** — Workspace `759839464639728` — Production workloads"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "data_sources_table",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Data Sources\n",
+                "\n",
+                "All metrics are derived from Databricks system tables and two lookup tables maintained by a weekly enrichment job.\n",
+                "\n",
+                "**`system.access.assistant_events`** — Every Genie Code prompt/response (in-editor AI assistant)\n",
+                "\n",
+                "**`system.access.audit`** — All workspace actions — used here to extract Genie Spaces queries\n",
+                "\n",
+                "**`system.billing.usage`** — DBU consumption by product, workspace, and date\n",
+                "\n",
+                "**`system.billing.list_prices`** — SKU-level list pricing; joined to usage for dollar cost estimates\n",
+                "\n",
+                "**`system.ai_gateway.usage`** — Per-request AI Gateway logs (tokens, latency, model, user)\n",
+                "\n",
+                "**`system.serving.served_entities`** — Active model serving endpoint configurations\n",
+                "\n",
+                "**`rai_qa_uc.ai_usage_monitor.user_display_names`** — Materialized email → display name lookup (442 users). Eliminates repeated audit scans for user names. Refreshed weekly.\n",
+                "\n",
+                "**`rai_qa_uc.ai_usage_monitor.genie_space_names`** — Space ID → title lookup via REST API. Resolves 11 QA spaces; DEV/PROD need tokens in `pltf` secret scope. Refreshed weekly (Mon 8 AM ET)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "dashboard_notes",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Dashboard Notes\n",
+                "\n",
+                "* **Model Serving** — Cost page shows Model Serving Cost ($) and Model Serving DBUs for endpoint hosting + inference. Executive Summary and Cost page stacked bar charts both exclude Model Serving because its magnitude (90%+ of spend) makes other products unreadable at the same scale\n",
+                "\n",
+                "* **Model Serving SKU Breakdown** — Horizontal bar chart on Cost page showing dollar cost split by SKU (Anthropic, OpenAI, Gemini, Serverless US East, Serverless US West). Labels are aliased from raw ENTERPRISE_* SKU names via SQL CASE statements\n",
+                "\n",
+                "* **Dollar-denominated charts** — All stacked bar charts (Monthly AI Products Cost, Monthly AI Cost by Product, Monthly Agent Cost) display USD rather than raw DBUs for clearer cost communication. Chart legends use friendly product names via SQL CASE in the billing_ai dataset\n",
+                "\n",
+                "* **AI Cost Forecast** — Uses `ai_forecast()` (Databricks SQL AI function) to project total monthly AI cost 2 months forward with 95% confidence interval. Trains on complete historical months only (excludes partial current month). Rendered as a forecast-line chart with actual (solid) vs predicted (with shaded confidence band). Uses `global_floor: 0` to prevent negative projections\n",
+                "\n",
+                "* **Monthly AI Cost History vs counters** — The history line chart shows ALL complete months since Jan 2024. The counters compare only the two most recent 30-day windows. This means the chart may show a decline from a peak (e.g., Jan 2026 spike) while the counter shows month-over-month growth — both are correct, different time horizons\n",
+                "\n",
+                "* **Adoption by Environment** — Shows Genie Code requests/users and Genie Spaces queries/users side-by-side per workspace. Intentionally excludes DBU cost (which lives on the Cost page) to avoid implying a causal link between request volume and spend\n",
+                "\n",
+                "* **Dollar amounts (Cost column)** — Calculated by joining `system.billing.usage` to `system.billing.list_prices` on SKU name and date window. Uses `pricing.effective_list.default` (resolves list vs promotional pricing). Current rate: $0.07/DBU for all AI SKUs. **Caveat:** These are list prices — contracted rates may differ\n",
+                "\n",
+                "* **AI Gateway** — `system.ai_gateway.usage` is currently empty in this workspace (no AI Gateway routes configured). All Infrastructure page Gateway widgets (Success Rate, Input/Output Tokens, Top Models, Latency, Error Rate, Daily Volume) are pre-wired and will auto-populate once routes are created. The `growth_periods` dataset uses LEFT JOINs to remain resilient to empty gateway data\n",
+                "\n",
+                "* **Date Range filter** — Defaults to 30 days rolling; the `env_comparison`, `growth_periods`, and `cost_forecast` datasets always use fixed windows regardless of filter\n",
+                "\n",
+                "* **Environment filter** — Controls all datasets except `env_comparison`, `growth_periods`, and `cost_forecast` (which are fixed-window)\n",
+                "\n",
+                "* **Top 20 users** — Adoption page tables show the 20 most active users (by submission/query count) within the selected date range and environment\n",
+                "\n",
+                "* **All times** — Displayed in Eastern Time (ET) unless otherwise noted\n",
+                "\n",
+                "* **Period arrows** — KPI counters show ↑/↓ percentage change vs the prior 30-day window. Applies to 14 counters: Total AI Cost ($), Total AI DBUs, Total AI Requests, Unique AI Users, Cost per User (DBUs), Cost per User ($), Cost per Request, Avg Requests/User, Retention Rate, New Users, Agent Cost ($), Model Serving Cost ($), Agent DBUs, and Model Serving DBUs\n",
+                "\n",
+                "* **Conditional arrow colors** — Period arrows are color-coded by metric type. Green (↑) / red (↓) for engagement metrics (requests, users, retention, new users, avg requests/user). Red (↑) / green (↓) for cost metrics (DBUs, dollars, cost-per-request, cost-per-user) where increases represent higher spend\n",
+                "\n",
+                "* **New Users metric** — Counts users active in the current 30-day period who were NOT active in the prior 30-day period (LEFT JOIN exclusion pattern)\n",
+                "\n",
+                "* **Cost per User ($)** — Total dollar cost ÷ unique users for the 30-day window\n",
+                "\n",
+                "* **Cost page section headers** — Dollar Cost and DBU Consumption sections clearly separate currency-denominated KPIs from raw DBU consumption counters\n",
+                "\n",
+                "* **Friendly labels** — All raw system identifiers are aliased to readable names via SQL CASE statements in dataset queries: SKU names (Anthropic, OpenAI, Gemini, Serverless US East/West), product names (Model Serving, AI Functions, AI Gateway, Agent Bricks, Agent Evaluation, Supervisor Agent), and environments (DEV, QA, PROD)\n",
+                "\n",
+                "* **Color consistency** — Charts with color-encoded dimensions use explicit color mappings for cross-chart consistency. Products: Model Serving (#1976D2 blue), AI Functions (#F57C00 orange), AI Gateway (#7B1FA2 purple), Agent Bricks (#388E3C green), Agent Evaluation (#D32F2F red), Supervisor Agent (#0097A7 teal). Environments: DEV (#1976D2 blue), QA (#F57C00 orange), PROD (#388E3C green). These mappings ensure the same category renders the same color regardless of which chart subset it appears in\n",
+                "\n",
+                "* **Performance optimizations** — User display names resolved via `rai_qa_uc.ai_usage_monitor.user_display_names` lookup table (not audit CTE scans). Billing consolidated to one month-level dataset serving all Cost page widgets. `growth_periods` uses single-scan-per-source pattern (3 table scans total). Users inactive >90d show email addresses instead of display names."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "version_history",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Version History\n",
+                "\n",
+                "| Version | Date | Author | Notes |\n",
+                "| --- | --- | --- | --- |\n",
+                "| 1.2.0 | 2026-05-12 | Brandon Croom | Removed conditional color formatting from all 16 period counters (Executive Summary + Cost page). Counter `target.style.rules` evaluated against unsigned change magnitude — decreases never triggered red. Arrows (↑/↓) correctly indicate direction without misleading color signals. |\n",
+                "| 1.1.0 | 2026-05-12 | Brandon Croom | Cross-dashboard consistency standardization: environment colors updated from Material 700 to Material 500 (#2196F3/#FF9800/#4CAF50), counter red standardized to #F44336, comparison operators changed from > to >= for consistency with Genie Code and Genie Spaces dashboards. |\n",
+                "| 1.0.0 | 2026-05-12 | Brandon Croom | Initial versioned release — 5 content pages, 14 period counters, glossary. Includes: Executive Summary, Adoption, Cost (with ai_forecast projection), Infrastructure, Glossary. Datasets: 12 SQL queries against system tables + 2 lookup tables. Features: conditional arrow colors (green/red by metric type), friendly name aliasing via SQL CASE, cross-environment comparison, Model Serving SKU breakdown. |"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 33,
+            "width": 12,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "date_range_filter",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_date_range",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219b7915152bda7682591_date_range",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b1243721940800155270b7d5c62_date_range",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cca343330f5ad89ec0_date_range",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cfb3dd3fbd67981ceb_date_range",
+                "query": {
+                  "datasetName": "genie_spaces_top_users",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219d38cb2364c3df2767a_date_range",
+                "query": {
+                  "datasetName": "genie_spaces_daily",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c3b7ab3a3930e963b0_date_range",
+                "query": {
+                  "datasetName": "usage_patterns",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b13d4fd1944bd4492d42b359d02_date_range",
+                "query": {
+                  "datasetName": "assistant_events_top_users",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Date Range"
+              },
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219b7915152bda7682591_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b1243721940800155270b7d5c62_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cca343330f5ad89ec0_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cfb3dd3fbd67981ceb_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219d38cb2364c3df2767a_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c3b7ab3a3930e963b0_date_range"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b13d4fd1944bd4492d42b359d02_date_range"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "env_filter",
+            "queries": [
+              {
+                "name": "dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_environment",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "environment_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_env_filter",
+                "query": {
+                  "datasetName": "assistant_events",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219b7915152bda7682591_env_filter",
+                "query": {
+                  "datasetName": "ai_gateway",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b1243721940800155270b7d5c62_env_filter",
+                "query": {
+                  "datasetName": "billing_ai",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c7845caf5e36c319b4_env_filter",
+                "query": {
+                  "datasetName": "serving_endpoints",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cca343330f5ad89ec0_env_filter",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cfb3dd3fbd67981ceb_env_filter",
+                "query": {
+                  "datasetName": "genie_spaces_top_users",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219d38cb2364c3df2767a_env_filter",
+                "query": {
+                  "datasetName": "genie_spaces_daily",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c3b7ab3a3930e963b0_env_filter",
+                "query": {
+                  "datasetName": "usage_patterns",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b13d4fd1944bd4492d42b359d02_env_filter",
+                "query": {
+                  "datasetName": "assistant_events_top_users",
+                  "parameters": [
+                    {
+                      "name": "env_filter",
+                      "keyword": "env_filter"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Environment"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "environment",
+                    "queryName": "dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_environment"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219bfaef7f688c3aa6dd6_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219b7915152bda7682591_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b1243721940800155270b7d5c62_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c7845caf5e36c319b4_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cca343330f5ad89ec0_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219cfb3dd3fbd67981ceb_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219d38cb2364c3df2767a_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b12437219c3b7ab3a3930e963b0_env_filter"
+                  },
+                  {
+                    "parameterName": "env_filter",
+                    "queryName": "parameter_dashboards/01f14aeea1b41ac4afa228ddffea7ffc/datasets/01f14b13d4fd1944bd4492d42b359d02_env_filter"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}

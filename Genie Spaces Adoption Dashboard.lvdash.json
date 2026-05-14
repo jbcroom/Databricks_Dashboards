@@ -1,0 +1,2280 @@
+{
+  "datasets": [
+    {
+      "name": "genie_monthly",
+      "displayName": "Genie Spaces Monthly Summary",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', event_date) AS event_month,\n",
+        "  CASE workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE workspace_id\n",
+        "  END AS environment,\n",
+        "  COUNT(DISTINCT identity_metadata.run_by) AS active_users,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN 1\n",
+        "    END\n",
+        "  ) AS questions,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversation' THEN 1\n",
+        "    END\n",
+        "  ) AS conversations,\n",
+        "  COUNT(DISTINCT\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN request_params['space_id']\n",
+        "    END\n",
+        "  ) AS active_spaces,\n",
+        "  COUNT(DISTINCT\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN request_params['conversation_id']\n",
+        "    END\n",
+        "  ) AS unique_conversations\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'aibiGenie'\n",
+        "  AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "  AND action_name IN (\n",
+        "    'createConversationMessage', 'createConversation', 'executeMessageQuery', 'executeQuery'\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  2"
+      ],
+      "columns": [
+        {
+          "displayName": "is_complete_month",
+          "description": "1 if the month is fully complete, 0 for current partial month",
+          "expression": "CASE WHEN `event_month` < DATE_TRUNC('MONTH', CURRENT_DATE()) THEN 1 ELSE 0 END"
+        }
+      ]
+    },
+    {
+      "name": "genie_cumulative",
+      "displayName": "Genie Spaces Cumulative Growth",
+      "queryLines": [
+        "WITH first_use AS (\n",
+        "  SELECT\n",
+        "    identity_metadata.run_by AS user_email,\n",
+        "    MIN(DATE_TRUNC('MONTH', event_date)) AS first_month\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation', 'executeMessageQuery')\n",
+        "  GROUP BY\n",
+        "    1\n",
+        ")\n",
+        "SELECT\n",
+        "  first_month,\n",
+        "  COUNT(*) AS new_users,\n",
+        "  SUM(COUNT(*)) OVER (ORDER BY first_month) AS cumulative_users\n",
+        "FROM\n",
+        "  first_use\n",
+        "GROUP BY\n",
+        "  1\n",
+        "ORDER BY\n",
+        "  1"
+      ]
+    },
+    {
+      "name": "genie_weekly",
+      "displayName": "Genie Spaces Weekly Summary",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('WEEK', event_date) AS event_week,\n",
+        "  CASE workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE workspace_id\n",
+        "  END AS environment,\n",
+        "  COUNT(DISTINCT identity_metadata.run_by) AS active_users,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN 1\n",
+        "    END\n",
+        "  ) AS questions\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'aibiGenie'\n",
+        "  AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "  AND action_name IN (\n",
+        "    'createConversationMessage', 'createConversation', 'executeMessageQuery', 'executeQuery'\n",
+        "  )\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  2"
+      ]
+    },
+    {
+      "name": "genie_spaces",
+      "displayName": "Genie Spaces Usage",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(n.display_name, a.space_id) AS space_name,\n",
+        "  a.space_id,\n",
+        "  COUNT(*) AS questions,\n",
+        "  COUNT(DISTINCT a.user_email) AS unique_users,\n",
+        "  COUNT(DISTINCT a.conversation_id) AS conversations,\n",
+        "  MAX(a.event_date) AS last_active,\n",
+        "  MIN(a.event_date) AS first_active\n",
+        "FROM\n",
+        "  (\n",
+        "    SELECT\n",
+        "      request_params['space_id'] AS space_id,\n",
+        "      request_params['conversation_id'] AS conversation_id,\n",
+        "      identity_metadata.run_by AS user_email,\n",
+        "      event_date\n",
+        "    FROM\n",
+        "      system.access.audit\n",
+        "    WHERE\n",
+        "      service_name = 'aibiGenie'\n",
+        "      AND action_name = 'createConversationMessage'\n",
+        "      AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "      AND request_params['space_id'] IS NOT NULL\n",
+        "  ) a\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.genie_space_names n\n",
+        "      ON a.space_id = n.space_id\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  questions DESC"
+      ]
+    },
+    {
+      "name": "genie_retention",
+      "displayName": "Genie Spaces Retention",
+      "queryLines": [
+        "WITH monthly_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    DATE_TRUNC('MONTH', event_date) AS event_month,\n",
+        "    identity_metadata.run_by AS user_email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation', 'executeMessageQuery')\n",
+        "    AND DATE_TRUNC('MONTH', event_date) < DATE_TRUNC('MONTH', CURRENT_DATE())\n",
+        "),\n",
+        "retention AS (\n",
+        "  SELECT\n",
+        "    a.event_month,\n",
+        "    COUNT(DISTINCT a.user_email) AS active_users,\n",
+        "    COUNT(DISTINCT b.user_email) AS retained_users\n",
+        "  FROM\n",
+        "    monthly_users a\n",
+        "      LEFT JOIN monthly_users b\n",
+        "        ON a.user_email = b.user_email\n",
+        "        AND b.event_month = a.event_month - INTERVAL 1 MONTH\n",
+        "  GROUP BY\n",
+        "    1\n",
+        ")\n",
+        "SELECT\n",
+        "  event_month,\n",
+        "  active_users,\n",
+        "  retained_users,\n",
+        "  active_users - retained_users AS new_users,\n",
+        "  CASE\n",
+        "    WHEN active_users > 0 THEN ROUND(retained_users * 100.0 / active_users, 1)\n",
+        "    ELSE 0\n",
+        "  END AS retention_rate\n",
+        "FROM\n",
+        "  retention\n",
+        "ORDER BY\n",
+        "  1"
+      ],
+      "columns": [
+        {
+          "displayName": "is_complete_month",
+          "description": "1 if the month is fully complete, 0 for current partial month",
+          "expression": "CASE WHEN `event_month` < DATE_TRUNC('MONTH', CURRENT_DATE()) THEN 1 ELSE 0 END"
+        }
+      ]
+    },
+    {
+      "name": "genie_activity",
+      "displayName": "Genie Spaces Activity Patterns",
+      "queryLines": [
+        "SELECT\n",
+        "  DAYOFWEEK(event_date) AS dow_num,\n",
+        "  CASE DAYOFWEEK(event_date)\n",
+        "    WHEN 1 THEN 'Sun'\n",
+        "    WHEN 2 THEN 'Mon'\n",
+        "    WHEN 3 THEN 'Tue'\n",
+        "    WHEN 4 THEN 'Wed'\n",
+        "    WHEN 5 THEN 'Thu'\n",
+        "    WHEN 6 THEN 'Fri'\n",
+        "    WHEN 7 THEN 'Sat'\n",
+        "  END AS day_of_week,\n",
+        "  HOUR(CONVERT_TIMEZONE('UTC', 'America/New_York', event_time)) AS hour_of_day,\n",
+        "  COUNT(*) AS questions\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'aibiGenie'\n",
+        "  AND action_name = 'createConversationMessage'\n",
+        "  AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2,\n",
+        "  3\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  3"
+      ]
+    },
+    {
+      "name": "genie_space_monthly",
+      "displayName": "Genie Spaces Monthly by Space",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', a.event_date) AS event_month,\n",
+        "  COALESCE(n.display_name, a.space_id) AS space_name,\n",
+        "  COUNT(*) AS questions,\n",
+        "  COUNT(DISTINCT a.user_email) AS unique_users\n",
+        "FROM\n",
+        "  (\n",
+        "    SELECT\n",
+        "      request_params['space_id'] AS space_id,\n",
+        "      identity_metadata.run_by AS user_email,\n",
+        "      event_date\n",
+        "    FROM\n",
+        "      system.access.audit\n",
+        "    WHERE\n",
+        "      service_name = 'aibiGenie'\n",
+        "      AND action_name = 'createConversationMessage'\n",
+        "      AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "      AND request_params['space_id'] IS NOT NULL\n",
+        "  ) a\n",
+        "    LEFT JOIN rai_qa_uc.ai_usage_monitor.genie_space_names n\n",
+        "      ON a.space_id = n.space_id\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  2"
+      ]
+    },
+    {
+      "name": "genie_adoption",
+      "displayName": "Genie Spaces Adoption Rate",
+      "queryLines": [
+        "WITH workspace_users AS (\n",
+        "  SELECT\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "      ELSE workspace_id\n",
+        "    END AS environment,\n",
+        "    COUNT(DISTINCT identity_metadata.run_by) AS total_users\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    event_date >= CURRENT_DATE - INTERVAL 90 DAYS\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND identity_metadata.run_by IS NOT NULL\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "genie_all_time AS (\n",
+        "  SELECT\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "      ELSE workspace_id\n",
+        "    END AS environment,\n",
+        "    COUNT(DISTINCT identity_metadata.run_by) AS genie_users_alltime\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation')\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "genie_30d AS (\n",
+        "  SELECT\n",
+        "    CASE workspace_id\n",
+        "      WHEN '1160807094185734' THEN 'DEV'\n",
+        "      WHEN '748821712601607' THEN 'QA'\n",
+        "      WHEN '759839464639728' THEN 'PROD'\n",
+        "      ELSE workspace_id\n",
+        "    END AS environment,\n",
+        "    COUNT(DISTINCT identity_metadata.run_by) AS genie_users_30d\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND event_date >= CURRENT_DATE - INTERVAL 30 DAYS\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation')\n",
+        "  GROUP BY\n",
+        "    1\n",
+        ")\n",
+        "SELECT\n",
+        "  w.environment,\n",
+        "  w.total_users,\n",
+        "  COALESCE(a.genie_users_alltime, 0) AS genie_users_alltime,\n",
+        "  COALESCE(d.genie_users_30d, 0) AS genie_users_30d,\n",
+        "  ROUND(COALESCE(a.genie_users_alltime, 0) * 100.0 / w.total_users, 1) AS adoption_pct_alltime,\n",
+        "  ROUND(COALESCE(d.genie_users_30d, 0) * 100.0 / w.total_users, 1) AS adoption_pct_30d\n",
+        "FROM\n",
+        "  workspace_users w\n",
+        "    LEFT JOIN genie_all_time a\n",
+        "      ON w.environment = a.environment\n",
+        "    LEFT JOIN genie_30d d\n",
+        "      ON w.environment = d.environment\n",
+        "ORDER BY\n",
+        "  w.environment"
+      ]
+    },
+    {
+      "name": "genie_new_returning",
+      "displayName": "Genie Spaces New vs Returning",
+      "queryLines": [
+        "WITH first_use AS (\n",
+        "  SELECT\n",
+        "    identity_metadata.run_by AS user_email,\n",
+        "    MIN(DATE_TRUNC('MONTH', event_date)) AS first_month\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation', 'executeMessageQuery')\n",
+        "  GROUP BY\n",
+        "    1\n",
+        "),\n",
+        "monthly_users AS (\n",
+        "  SELECT DISTINCT\n",
+        "    DATE_TRUNC('MONTH', event_date) AS event_month,\n",
+        "    identity_metadata.run_by AS user_email\n",
+        "  FROM\n",
+        "    system.access.audit\n",
+        "  WHERE\n",
+        "    service_name = 'aibiGenie'\n",
+        "    AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "    AND action_name IN ('createConversationMessage', 'createConversation', 'executeMessageQuery')\n",
+        ")\n",
+        "SELECT\n",
+        "  m.event_month,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN m.event_month = f.first_month THEN 1\n",
+        "    END\n",
+        "  ) AS new_users,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN m.event_month > f.first_month THEN 1\n",
+        "    END\n",
+        "  ) AS returning_users,\n",
+        "  COUNT(*) AS total_users,\n",
+        "  ROUND(\n",
+        "    COUNT(\n",
+        "      CASE\n",
+        "        WHEN m.event_month > f.first_month THEN 1\n",
+        "      END\n",
+        "    )\n",
+        "      * 100.0\n",
+        "      / COUNT(*),\n",
+        "    1\n",
+        "  ) AS returning_pct\n",
+        "FROM\n",
+        "  monthly_users m\n",
+        "    JOIN first_use f\n",
+        "      ON m.user_email = f.user_email\n",
+        "GROUP BY\n",
+        "  1\n",
+        "ORDER BY\n",
+        "  1"
+      ]
+    },
+    {
+      "name": "genie_monthly_complete",
+      "displayName": "Genie Monthly (Complete Months Only)",
+      "queryLines": [
+        "SELECT\n",
+        "  DATE_TRUNC('MONTH', event_date) AS event_month,\n",
+        "  CASE workspace_id\n",
+        "    WHEN '1160807094185734' THEN 'DEV'\n",
+        "    WHEN '748821712601607' THEN 'QA'\n",
+        "    WHEN '759839464639728' THEN 'PROD'\n",
+        "    ELSE workspace_id\n",
+        "  END AS environment,\n",
+        "  COUNT(DISTINCT identity_metadata.run_by) AS active_users,\n",
+        "  COUNT(\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN 1\n",
+        "    END\n",
+        "  ) AS questions,\n",
+        "  COUNT(DISTINCT\n",
+        "    CASE\n",
+        "      WHEN action_name = 'createConversationMessage' THEN request_params['space_id']\n",
+        "    END\n",
+        "  ) AS active_spaces\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'aibiGenie'\n",
+        "  AND identity_metadata.run_by NOT LIKE '%@databricks.com'\n",
+        "  AND action_name IN (\n",
+        "    'createConversationMessage', 'createConversation', 'executeMessageQuery', 'executeQuery'\n",
+        "  )\n",
+        "  AND DATE_TRUNC('MONTH', event_date) < DATE_TRUNC('MONTH', CURRENT_DATE())\n",
+        "GROUP BY\n",
+        "  1,\n",
+        "  2\n",
+        "ORDER BY\n",
+        "  1,\n",
+        "  2"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "b3343308",
+      "displayName": "Executive Summary",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Genie Spaces Adoption Dashboard\n",
+                "Tracking AI/BI Genie Spaces usage across DEV, QA, and PROD environments."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "wau_line",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_weekly",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "event_week",
+                      "expression": "`event_week`"
+                    },
+                    {
+                      "name": "sum(active_users)",
+                      "expression": "SUM(`active_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Weekly Active Users by Environment",
+                "showTitle": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_week",
+                  "displayName": "Week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(active_users)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "mau_line",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_monthly",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "sum(active_users)",
+                      "expression": "SUM(`active_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Monthly Active Users by Environment",
+                "showTitle": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(active_users)",
+                  "displayName": "Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_alltime",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_adoption",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "sum(adoption_pct_alltime)",
+                      "expression": "SUM(`adoption_pct_alltime`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "All-Time Adoption %",
+                "description": "% of workspace users who have ever used Genie Spaces",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(adoption_pct_alltime)",
+                  "displayName": "Adoption %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "adoption_30d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_adoption",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "sum(adoption_pct_30d)",
+                      "expression": "SUM(`adoption_pct_30d`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "30-Day Active Adoption %",
+                "description": "% of workspace users active in Genie Spaces in last 30 days",
+                "showDescription": true
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(adoption_pct_30d)",
+                  "displayName": "Adoption %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 10,
+            "width": 6,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_users",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_monthly_complete",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(active_users)",
+                      "expression": "SUM(`active_users`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Active Users",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(active_users)"
+                },
+                "target": {
+                  "fieldName": "sum(active_users)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_questions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_monthly_complete",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Questions",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(questions)"
+                },
+                "target": {
+                  "fieldName": "sum(questions)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "counter_spaces",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_monthly_complete",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(active_spaces)",
+                      "expression": "SUM(`active_spaces`)"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Active Spaces",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(active_spaces)"
+                },
+                "target": {
+                  "fieldName": "sum(active_spaces)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "data_freshness",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_weekly",
+                  "fields": [
+                    {
+                      "name": "max(event_week)",
+                      "expression": "MAX(`event_week`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Data Through",
+                "showTitle": true,
+                "description": "Most recent week with data",
+                "showDescription": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "max(event_week)",
+                  "format": {
+                    "type": "date",
+                    "date": "locale-short-month"
+                  },
+                  "displayName": "Latest Week"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "space_analysis",
+      "displayName": "Space Analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Space Analysis\n",
+                "Usage breakdown by Genie Space — which spaces are driving the most engagement and how usage is distributed over time."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "top_spaces",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "fields": [
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    },
+                    {
+                      "name": "space_name",
+                      "expression": "`space_name`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Top Spaces by Questions"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(questions)",
+                  "displayName": "Questions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "space_name",
+                  "displayName": "Space",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "space_time",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_space_monthly",
+                  "fields": [
+                    {
+                      "name": "space_name",
+                      "expression": "`space_name`"
+                    },
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Space Usage Over Time"
+              },
+              "version": 3,
+              "mark": {
+                "layout": "stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(questions)",
+                  "displayName": "Questions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "space_name",
+                  "displayName": "Space",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "space_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_spaces",
+                  "fields": [
+                    {
+                      "name": "space_name",
+                      "expression": "`space_name`"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    },
+                    {
+                      "name": "sum(unique_users)",
+                      "expression": "SUM(`unique_users`)"
+                    },
+                    {
+                      "name": "sum(conversations)",
+                      "expression": "SUM(`conversations`)"
+                    },
+                    {
+                      "name": "max(last_active)",
+                      "expression": "MAX(`last_active`)"
+                    },
+                    {
+                      "name": "min(first_active)",
+                      "expression": "MIN(`first_active`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Space Details"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "space_name",
+                    "displayName": "Space Name"
+                  },
+                  {
+                    "fieldName": "sum(questions)",
+                    "displayName": "Questions"
+                  },
+                  {
+                    "fieldName": "sum(unique_users)",
+                    "displayName": "Users"
+                  },
+                  {
+                    "fieldName": "sum(conversations)",
+                    "displayName": "Conversations"
+                  },
+                  {
+                    "fieldName": "max(last_active)",
+                    "displayName": "Last Active"
+                  },
+                  {
+                    "fieldName": "min(first_active)",
+                    "displayName": "First Active"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "adoption_growth",
+      "displayName": "Adoption & Growth",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Adoption & Growth\n",
+                "User acquisition, retention, and growth decomposition for Genie Spaces across the organization."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "retention_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_retention",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(retention_rate)",
+                      "expression": "SUM(`retention_rate`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`is_complete_month` = 1"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Retention Rate",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(retention_rate)",
+                  "formatTemplate": "{{ @formatted }}%"
+                },
+                "target": {
+                  "fieldName": "sum(retention_rate)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "new_users_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_retention",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`is_complete_month` = 1"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "New Users",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(new_users)"
+                },
+                "target": {
+                  "fieldName": "sum(new_users)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "retained_counter",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_retention",
+                  "fields": [
+                    {
+                      "name": "monthly(event_month)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    },
+                    {
+                      "name": "sum(retained_users)",
+                      "expression": "SUM(`retained_users`)"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`is_complete_month` = 1"
+                    }
+                  ],
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "DESC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `event_month`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Retained Users",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(retained_users)"
+                },
+                "target": {
+                  "fieldName": "sum(retained_users)",
+                  "period": {
+                    "type": "relative-to-value-period",
+                    "offset": -1
+                  },
+                  "change": {
+                    "type": "percent"
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(event_month)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "new_users_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_cumulative",
+                  "fields": [
+                    {
+                      "name": "first_month",
+                      "expression": "`first_month`"
+                    },
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "New Users Per Month"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "first_month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(new_users)",
+                  "displayName": "New Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "cumulative_area",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_cumulative",
+                  "fields": [
+                    {
+                      "name": "first_month",
+                      "expression": "`first_month`"
+                    },
+                    {
+                      "name": "sum(cumulative_users)",
+                      "expression": "SUM(`cumulative_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Cumulative User Growth"
+              },
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "first_month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(cumulative_users)",
+                  "displayName": "Total Users",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "new_vs_returning",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_new_returning",
+                  "fields": [
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "sum(new_users)",
+                      "expression": "SUM(`new_users`)"
+                    },
+                    {
+                      "name": "sum(returning_users)",
+                      "expression": "SUM(`returning_users`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "New vs Returning Users"
+              },
+              "mark": {
+                "colors": [
+                  "#FF9800",
+                  "#4CAF50"
+                ],
+                "layout": "stack"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_month",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "sum(new_users)",
+                      "displayName": "New"
+                    },
+                    {
+                      "fieldName": "sum(returning_users)",
+                      "displayName": "Returning"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "none"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "engagement",
+      "displayName": "Engagement Analysis",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Engagement Analysis\n",
+                "Deep dive into user engagement patterns — question volume trends, peak usage hours, and day-of-week activity distribution."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "weekly_questions",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_weekly",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "event_week",
+                      "expression": "`event_week`"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Weekly Questions by Environment"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_week",
+                  "displayName": "Week",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(questions)",
+                  "displayName": "Questions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "environment",
+                  "displayName": "Environment",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "DEV",
+                        "QA",
+                        "PROD"
+                      ]
+                    },
+                    "mappings": [
+                      {
+                        "value": "DEV",
+                        "color": "#2196F3"
+                      },
+                      {
+                        "value": "QA",
+                        "color": "#FF9800"
+                      },
+                      {
+                        "value": "PROD",
+                        "color": "#4CAF50"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "dow_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_activity",
+                  "fields": [
+                    {
+                      "name": "day_of_week",
+                      "expression": "`day_of_week`"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Activity by Day of Week"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day_of_week",
+                  "displayName": "Day",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Mon",
+                        "Tue",
+                        "Wed",
+                        "Thu",
+                        "Fri",
+                        "Sat",
+                        "Sun"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(questions)",
+                  "displayName": "Questions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "hour_bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "genie_activity",
+                  "fields": [
+                    {
+                      "name": "hour_of_day",
+                      "expression": "`hour_of_day`"
+                    },
+                    {
+                      "name": "sum(questions)",
+                      "expression": "SUM(`questions`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Activity by Hour of Day (ET)"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour_of_day",
+                  "displayName": "Hour (ET)",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(questions)",
+                  "displayName": "Questions",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 7,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "global_filters",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "date_range",
+            "queries": [
+              {
+                "name": "genie_monthly_event_month",
+                "query": {
+                  "datasetName": "genie_monthly",
+                  "fields": [
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "event_month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_weekly_event_week",
+                "query": {
+                  "datasetName": "genie_weekly",
+                  "fields": [
+                    {
+                      "name": "event_week",
+                      "expression": "`event_week`"
+                    },
+                    {
+                      "name": "event_week_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_space_monthly_event_month",
+                "query": {
+                  "datasetName": "genie_space_monthly",
+                  "fields": [
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "event_month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_retention_event_month",
+                "query": {
+                  "datasetName": "genie_retention",
+                  "fields": [
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "event_month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_new_returning_event_month",
+                "query": {
+                  "datasetName": "genie_new_returning",
+                  "fields": [
+                    {
+                      "name": "event_month",
+                      "expression": "`event_month`"
+                    },
+                    {
+                      "name": "event_month_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "event_month",
+                    "displayName": "Date Range"
+                  },
+                  {
+                    "fieldName": "event_week",
+                    "displayName": "Date Range"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "env_filter",
+            "queries": [
+              {
+                "name": "genie_monthly_environment",
+                "query": {
+                  "datasetName": "genie_monthly",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "environment_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_weekly_environment",
+                "query": {
+                  "datasetName": "genie_weekly",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "environment_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "genie_monthly_complete_environment",
+                "query": {
+                  "datasetName": "genie_monthly_complete",
+                  "fields": [
+                    {
+                      "name": "environment",
+                      "expression": "`environment`"
+                    },
+                    {
+                      "name": "environment_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "environment",
+                    "displayName": "Environment"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "glossary",
+      "displayName": "Glossary",
+      "layout": [
+        {
+          "widget": {
+            "name": "header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Glossary\n",
+                "Data sources, metric definitions, environment mapping, and version history for this dashboard."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "data_sources",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Data Sources\n",
+                "\n",
+                "| Source | Description |\n",
+                "| --- | --- |\n",
+                "| `system.access.audit` | Primary usage source. Filtered to `service_name = 'aibiGenie'`. Excludes Databricks employees (`@databricks.com`). |\n",
+                "| `rai_qa_uc.ai_usage_monitor.genie_space_names` | Lookup table mapping `space_id` → friendly display name. Populated by enrichment notebook. |\n",
+                "\n",
+                "### Environments\n",
+                "\n",
+                "| Workspace ID | Environment |\n",
+                "| --- | --- |\n",
+                "| 1160807094185734 | DEV |\n",
+                "| 748821712601607 | QA |\n",
+                "| 759839464639728 | PROD |"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "metrics",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Metric Definitions\n",
+                "\n",
+                "| Metric | Definition |\n",
+                "| --- | --- |\n",
+                "| Active Users | Distinct users with any tracked Genie Space event in the period |\n",
+                "| Questions | Count of `createConversationMessage` events (user submitting a question) |\n",
+                "| Active Spaces | Distinct space IDs with at least one question in the period |\n",
+                "| Conversations | Distinct conversation IDs with questions |\n",
+                "| Retention Rate | % of current month's users who were also active in the prior month |\n",
+                "| New Users | Users whose first Genie Space activity is in the current period |\n",
+                "| Returning Users | Users who were active in a prior month and are active again |\n",
+                "| Adoption % (All-Time) | Genie Space users ever / total workspace users (90-day active) |\n",
+                "| Adoption % (30-Day) | Genie Space users in last 30 days / total workspace users (90-day active) |\n",
+                "\n",
+                "### Technical Notes\n",
+                "* Counters exclude the current incomplete month\n",
+                "* Period comparison: month-over-month (%) with directional arrows (↑/↓)\n",
+                "* Environment colors: DEV = Blue (#2196F3), QA = Orange (#FF9800), PROD = Green (#4CAF50)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "version_history",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Version History\n",
+                "\n",
+                "| Version | Date | Author | Notes |\n",
+                "| --- | --- | --- | --- |\n",
+                "| 1.4.0 | 2026-05-12 | Brandon Croom | Removed conditional color formatting from all 6 period counters (Executive Summary + Adoption & Growth). Counter `target.style.rules` evaluated against the unsigned change magnitude — meaning decreases never triggered red. Arrows (↑/↓) correctly indicate direction without misleading color signals. |\n",
+                "| 1.3.0 | 2026-05-12 | Brandon Croom | Removed Cost page and Estimated Cost counter from Executive Summary. SUPERVISOR_AGENT billing is a shared inference proxy (not Genie-specific) — too imprecise to present as Genie Spaces cost. Added Global Filters page (Date Range + Environment). Cross-dashboard consistency standardization (Material 500 colors, >= operators, custom-order env sort). |\n",
+                "| 1.2.0 | 2026-05-12 | Brandon Croom | Added Estimated Cost counter to Executive Summary page (4 counters across top row). Fixed conditional formatting on all cost counters: increase = red (unfavorable), decrease = green (favorable). |\n",
+                "| 1.1.0 | 2026-05-12 | Brandon Croom | Added Cost page with 7 widgets and Genie Spaces Cost dataset. Includes monthly estimated cost, cost per question, DBU consumption, and month-over-month counters. Uses `system.billing.usage` with `SUPERVISOR_AGENT` as the closest available proxy for Genie AI inference cost. |\n",
+                "| 1.0.0 | 2026-05-12 | Brandon Croom | Initial release — 5 content pages, 9 datasets, 9 period counters. Includes: Executive Summary, Space Analysis, Adoption & Growth, Engagement Analysis, Glossary. Data from `system.access.audit` (aibiGenie service) + space name lookup. Features: environment-colored line charts, per-space usage breakdown, retention analysis, DOW/hour patterns, adoption rate comparisons. |"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
